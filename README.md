@@ -2,4 +2,5 @@
 qer training framework
 
 TODO:
-- [] Add 2D models
+
+- [ ] Add 2D models
