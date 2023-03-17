@@ -10,4 +10,4 @@ class DiceCoeff:
         if self.dice is not None:
             return 1-dice(input_tensor, target_tensor)
         else:
-            return 1-smp.losses.DiceLoss(mode=mode, ignore_index=ignore_index)(input_tensor, target_tensor)
+            return 1-smp.losses.DiceLoss(mode=self.mode, ignore_index=self.ignore_index)(input_tensor, target_tensor)

@@ -51,12 +51,12 @@ args.num_classes = dm.num_classes
 model =  qSegmentation(args)
 if args.mode == "multiclass":
     checkpoint_callback = pl.callbacks.ModelCheckpoint(filename='{epoch}-{valid_metric_nbg:.2f}-{train_metric_nbg:.2f}-{valid_metric_bg:.2f}-{train_metric_bg:.2f}',
-                                                       monitor='valid_loss',
+                                                       monitor=args.monitor,
                                                        mode='min',
                                                        save_last=True)
 else:
     checkpoint_callback = pl.callbacks.ModelCheckpoint(filename='{epoch}-{valid_metric:.2f}-{train_metric:.2f}',
-                                                       monitor='valid_loss',
+                                                       monitor=args.monitor,
                                                        mode='min',
                                                        save_last=True)
 
@@ -69,7 +69,8 @@ lr_monitor = LearningRateMonitor(logging_interval='step')
 early_stopping = EarlyStopping(monitor="valid_loss", patience=10)
 
 
-trainer = pl.Trainer(gpus=args.gpu, 
+trainer = pl.Trainer(accelerator='gpu',
+                     devices=args.gpu, 
                      precision=args.precision,
                      max_epochs=args.max_epoch, 
                      default_root_dir=log_dir,

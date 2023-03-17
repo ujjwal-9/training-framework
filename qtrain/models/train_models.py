@@ -25,7 +25,6 @@ class qSegmentation(pl.LightningModule):
         self.setup_losses()
         self.setup_metrics()
         
-
     def setup_model(self, train):
         if self.args.dataset_type == "2D":
             if self.args.model == "unet":
@@ -67,7 +66,7 @@ class qSegmentation(pl.LightningModule):
                 from monai.networks.nets import UNet
                 margs = self.args.model_args
                 self.model = UNet(spatial_dims=margs.spatial_dims,
-                                in_channels=len(self.args.windowing),
+                                in_channels=margs.in_channels,
                                 out_channels=margs.out_channels,
                                 channels=margs.channels,
                                 strides=margs.strides,
@@ -111,6 +110,8 @@ class qSegmentation(pl.LightningModule):
             self.losses["crossentropy"] = nn.CrossEntropyLoss()
         if "mse" in self.args.losses:
             self.losses["mse"] = nn.MSELoss()
+        
+        return
 
     def setup_metrics(self):
         self.metrics = {}
@@ -123,21 +124,21 @@ class qSegmentation(pl.LightningModule):
         if "jaccard" in self.args.metrics:
             from qtrain.metrics.jaccard import JaccardIndex
             self.metrics["jaccard"] = JaccardIndex(mode=self.args.mode)
-            if self.args.metrics_nbg:
-                self.metrics["jaccard_wbg"] = JaccardIndex(mode=self.args.mode, ignore_index=self.args.background_index)
-    
+
+        return
+
     def forward(self, z):
         z = self.model(z)
         return z
 
     def loss_fn(self, model_output, gt_segmentation_map, prefix='train_'):
         computed_losses = {}
-        if ["binary", "multiclass"] in self.args.mode:
-            gt_segmentation_map = gt_segmentation_map[:,0,:,:].double()
+        gt_segmentation_map = gt_segmentation_map.double()
         for i, loss in enumerate(self.losses):
             computed_losses[prefix+loss] = self.args.loss_contrib[i]*self.losses[loss](model_output, gt_segmentation_map)
         loss = torch.sum(torch.stack(list(computed_losses.values())))
         computed_losses[prefix+"total_loss"] = loss
+        self.log_dict(computed_losses)
         return loss
         
 
@@ -147,28 +148,26 @@ class qSegmentation(pl.LightningModule):
         #gt_segmentation_map : batch_size x 1  x H x W for multiclass, and batch_size x n_classes  x H x W
         # for multilabel and binary
         computed_metric = {}
-        if ["binary", "multiclass"] in self.args.mode:
-            gt_segmentation_map = gt_segmentation_map[:,0,:,:].double()
+        gt_segmentation_map = gt_segmentation_map.double()
         for metric in self.metrics:
             computed_metric[prefix+metric] = self.metrics[metric](model_output, gt_segmentation_map)
+        self.log_dict(computed_metric)
         return computed_metric
 
-    def compute_batch(self, batch, batch_idx, prefix='train'):
+    def compute_batch(self, batch, batch_idx, prefix='train_'):
         ct, gt_segmentation_map = batch
-        output = self(ct)
-        loss = self.loss_fn(output.double(), gt_segmentation_map.double(), prefix)
-        metric = self.metric_fn(output.double(), gt_segmentation_map.double(), prefix)
-        self.log_dict(computed_losses)
-        self.log_dict(computed_metric)
+        output = self(ct)[:,0,...].permute(0,3,1,2).contiguous().double()
+        loss = self.loss_fn(output, gt_segmentation_map, prefix)
+        metric = self.metric_fn(output, gt_segmentation_map, prefix)
         return loss, metric
 
     def training_step(self, batch, batch_idx):
         loss, metric = self.compute_batch(batch, batch_idx)
-        return logs
+        return loss
     
     def validation_step(self, batch, batch_idx):
         loss, metric = self.compute_batch(batch, batch_idx, "valid")
-        return logs
+        return loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         ct, gt_segmentation_map = batch
@@ -185,6 +184,11 @@ class qSegmentation(pl.LightningModule):
             decay_step = [25, 75, 150, 230]
             decay_factor = 0.1
             optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=4e-5, eps=1e-4)
+            scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=decay_step, gamma=decay_factor)
+        elif self.args.optimizer == "adamw":
+            decay_step = [25, 75, 150, 230]
+            decay_factor = 0.1
+            optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-4)
             scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=decay_step, gamma=decay_factor)
         elif self.args.optimizer == "sam":
             from qtrain.optimizers import SAM, optimize_with_SAM
