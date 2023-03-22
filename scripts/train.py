@@ -18,7 +18,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from qtrain.dataset.infarct import InfarctDataModule
 from qtrain.models.train_models import qSegmentation
 
-from clearml import Task
+# from clearml import Task
 
 
 parser = argparse.ArgumentParser()
@@ -32,13 +32,12 @@ with open(init_args.config) as f:
     if init_args.config.split(".")[-1] == "json":
         args = json.load(f)
     elif init_args.config.split(".")[-1] == "yaml":
-        args = yaml.safe_load(f)
-        args = args['args']
+        args = yaml.load(f, Loader=yaml.Loader)
 
 args = munch.munchify(args)
 args.experiment = init_args.exp
 
-task = Task.init(project_name="Infarcts", task_name=args.experiment)
+# task = Task.init(project_name="Infarcts", task_name=args.experiment)
 
 print("Training parameters:\n", args)
 

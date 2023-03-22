@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import monai.losses as L
+import monai.metrics as M
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import segmentation_models_pytorch as smp
@@ -28,51 +29,13 @@ class qSegmentation(pl.LightningModule):
         
     def setup_model(self, train):
         if self.args.dataset_type == "2D":
-            if self.args.model == "unet":
-                from qtrain.models.unet import Unet_Modified
-                self.model = Unet_Modified(self.args).double()
-
-            elif self.args.model == "unetpp":
-                from qtrain.models.unet import UnetPlusPlus
-                self.model = UnetPlusPlus(self.args).double()
-            
-            elif self.args.model == "transunet":
-                from qtrain.models.transunet.networks.vit_seg_modeling import VisionTransformer as ViT_seg
-                margs = self.args.model_args
-                margs.config_vit = CONFIGS[args.vit_name]
-                margs.config_vit.n_classes = self.args.num_classes
-                if args.vit_name.find('R50') != -1:
-                    margs.config_vit.patches.grid = [int(args.img_size / args.vit_patches_size), int(args.img_size / args.vit_patches_size)]
-                self.model = ViT_seg(margs.config_vit, img_size=self.args.img_size, num_classes=margs.config_vit.n_classes).double()
-                self.model.load_from(weights=np.load(margs.config_vit.pretrained_path))
-
-            elif self.args.model == "linknet":
-                from qtrain.models.linknet import LinkNet
-                self.model = LinkNet(self.args).double()
-            
-            elif self.args.model == "deeplabv3":
-                from qtrain.models.deeplab import DeepLabV3
-                self.model = DeepLabV3(self.args).double()
-            
-            elif self.args.model == "fcbformer":
-                from qtrain.models.fcbformer.models.models import FCBFormer
-                self.model = FCBFormer(self.args.img_size).double()
-
-            else:
-                raise ValueError("Model not supported")
-                exit(0)
+            raise ValueError("Model not supported")
+            exit(0)
         
         if self.args.dataset_type == "3D":
             if self.args.model == "3dunet":
                 from monai.networks.nets import UNet
-                margs = self.args.model_args
-                self.model = UNet(spatial_dims=margs.spatial_dims,
-                                in_channels=margs.in_channels,
-                                out_channels=margs.out_channels,
-                                channels=margs.channels,
-                                strides=margs.strides,
-                                num_res_units=margs.num_res_units
-                                ).double()
+                self.model = UNet(**self.args.model_params).double()
             else:
                 raise ValueError("Model not supported")
                 exit(0)
@@ -85,47 +48,16 @@ class qSegmentation(pl.LightningModule):
     def setup_losses(self):
         self.loss_contrib = self.args.loss_contrib
         self.losses = {}
-        if "focal" in self.args.losses:
-            self.losses["focal"] = smp.losses.FocalLoss(mode=self.args.mode)
-        if "dice" in self.args.losses:
-            self.losses["dice"] = smp.losses.DiceLoss(mode=self.args.mode)
-        if "mcc" in self.args.losses:
-            if self.args.mode == "binary":
-                self.losses["mcc"] = smp.losses.MCCLoss(mode=self.args.mode)
-            else:
-                warnings.warn(" 'non-binary' mode not supported for MCCLoss")
-        
-
-        if "boundary" in self.args.losses:
-            from qtrain.losses.boundary_loss import BoundaryLoss
-            self.losses["boundary"] = BoundaryLoss()
-        if "iou" in self.args.losses:
-            from qtrain.losses.dice_loss import IoULoss
-            self.losses["iou"] = IoULoss()
-        if "dice_v2" in self.args.losses:
-            from qtrain.losses.dice_loss import GDiceLossV2
-            self.losses["dice_v2"] = GDiceLossV2()
-        
-
-        if "crossentropy" in self.args.losses:
-            self.losses["crossentropy"] = nn.CrossEntropyLoss()
-        if "mse" in self.args.losses:
-            self.losses["mse"] = nn.MSELoss()
-        
+        for loss in self.args.losses:
+            key = str(loss).split("(")[0]
+            self.losses[key] = loss
         return
 
     def setup_metrics(self):
         self.metrics = {}
-        if "dice" in self.args.metrics:
-            from qtrain.metrics.dice import DiceCoeff
-            self.metrics["dice"] = DiceCoeff(mode=self.args.mode)
-            if self.args.metrics_nbg:
-                self.metrics["dice_wbg"] = DiceCoeff(mode=self.args.mode, ignore_index=self.args.background_index)
-        
-        if "jaccard" in self.args.metrics:
-            from qtrain.metrics.jaccard import JaccardIndex
-            self.metrics["jaccard"] = JaccardIndex(mode=self.args.mode)
-
+        for metric in self.args.metrics:
+            key = str(metric).split("(")[0]
+            self.metrics[key] = metric
         return
 
     def forward(self, z):
@@ -151,7 +83,8 @@ class qSegmentation(pl.LightningModule):
         computed_metric = {}
         gt_segmentation_map = gt_segmentation_map.double()
         for metric in self.metrics:
-            computed_metric[prefix+metric] = self.metrics[metric](model_output, gt_segmentation_map)
+            self.metrics[metric](model_output, gt_segmentation_map)
+            computed_metric[prefix+metric] = self.metrics[metric].aggregate().item()
         self.log_dict(computed_metric)
         return computed_metric
 
@@ -176,24 +109,8 @@ class qSegmentation(pl.LightningModule):
         return y_hat
 
     def configure_optimizers(self):
-        lr = self.args.lr
-        
-        if self.args.optimizer == "sgd":
-            optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=0.9)
-            scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=1e-4, max_lr=0.2)
-        elif self.args.optimizer == "adam":
-            decay_step = [25, 75, 150, 230]
-            decay_factor = 0.1
-            optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=4e-5, eps=1e-4)
-            scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=decay_step, gamma=decay_factor)
-        elif self.args.optimizer == "adamw":
-            decay_step = [25, 75, 150, 230]
-            decay_factor = 0.1
-            optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=decay_step, gamma=decay_factor)
-        elif self.args.optimizer == "sam":
-            from qtrain.optimizers import SAM, optimize_with_SAM
-            optimizer = SAM(self.model.parameters(), optim.SGD, lr=lr, momentum=0.9)
-            scheduler = optim.lr_scheduler.StepLR(optimizer, lr, self.args.max_epoch)
+
+        optimizer = self.args.optimizer(self.model.parameters(), **self.args.optimizer_params)
+        scheduler = self.args.scheduler(optimizer, **self.args.scheduler_params)
             
         return [optimizer], [scheduler]
