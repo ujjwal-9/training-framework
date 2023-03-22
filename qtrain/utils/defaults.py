@@ -18,7 +18,8 @@ from glob import glob
 from pprint import pprint
 from pydicom import dcmread
 from natsort import natsorted
-from tqdm.notebook import tqdm
+from sklearn.metrics import roc_curve
+from tqdm import tqdm
 from collections import defaultdict
 
 from skimage import io, color
@@ -126,6 +127,25 @@ def get_sqlite_db(sqlite_path="/home/users/ujjwal.upadhyay/packages/head-ct-anno
 def get_col(name, df):
     return list(df.columns).index(name)
     
+def find_optimal_threshold(actual_col, pred_col) -> float:
+    """Find the optimal threshold for binary classification using the Youden's J statistic.
+
+    Args:
+        df: A pandas DataFrame containing the actual and predicted labels.
+        actual_col: The name of the column containing the actual labels.
+        pred_col: The name of the column containing the predicted labels.
+        stratify_col: The name of the column to stratify by, or None to calculate overall metrics.
+
+    Returns:
+        The optimal threshold for binary classification.
+    """
+    # Calculate ROC curve and Youden's J statistic for each threshold
+    fpr, tpr, thresholds = roc_curve(actual_col, pred_col)
+    j_statistic = tpr - fpr
+    best_threshold_index = np.argmax(j_statistic)
+    return thresholds[best_threshold_index]
+
+
 def infer_series_classifier(img_based=True, body_part="brain"):
     validation_conf = {
         "isc": {
@@ -211,7 +231,7 @@ def get_db():
 def get_scan(series, db):
     series_dict = db.dicoms.find_one({"_id": series})
     filenames = [x["FilePath"] for x in series_dict["InstancesList"]]
-    return resampler.load_sitk_image(filenames)
+    return resampler.load_raw_sitk_img(filenames)
 
 
 def read_sitk_from_dcms(filenames):
@@ -227,6 +247,16 @@ def load_model(names):
         q_model.model = q_model.model.cuda()
         models.append(q_model)
     return models
+
+def run_models(sitk_img, models, names, items):
+    results = {}
+    for i, model in enumerate(models):
+         result = model.get_results(sitk_img)
+         if items is not None:
+            if items[i] is not None:
+                result = list(result[items[i]].values())[0]
+         results[names[i]] = result
+    return results
 
 
 def thresholding(pred, threshold=0.01):

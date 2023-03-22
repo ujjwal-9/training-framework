@@ -21,7 +21,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from tqdm import tqdm
 from warnings import warn
-from qtrain.utils import apply_torch_transform, get_croped_3d_volume
+from qtrain.utils import apply_torch_transform_3d, get_croped_3d_volume
 
 
 class InfarctDataModule(pl.LightningDataModule):

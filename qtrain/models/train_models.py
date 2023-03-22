@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import monai.losses as L
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import segmentation_models_pytorch as smp
@@ -137,7 +138,7 @@ class qSegmentation(pl.LightningModule):
         for i, loss in enumerate(self.losses):
             computed_losses[prefix+loss] = self.args.loss_contrib[i]*self.losses[loss](model_output, gt_segmentation_map)
         loss = torch.sum(torch.stack(list(computed_losses.values())))
-        computed_losses[prefix+"total_loss"] = loss
+        computed_losses[prefix+"loss"] = loss
         self.log_dict(computed_losses)
         return loss
         
@@ -166,7 +167,7 @@ class qSegmentation(pl.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        loss, metric = self.compute_batch(batch, batch_idx, "valid")
+        loss, metric = self.compute_batch(batch, batch_idx, "valid_")
         return loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
