@@ -161,6 +161,9 @@ class InfarctDataset3D(Dataset):
             return windowing.WindowsAsChannelsTransform(windows=[windowing.brain_window, 
                                                              windowing.blood_window, 
                                                              windowing.stroke_window])
+        elif self.args.windowing == "brain":
+            return windowing.WindowsAsChannelsTransform(windows=[windowing.brain_window])
+
         elif self.args.windowing == "brain-infarcts":
             return windowing.WindowsAsChannelsTransform(windows=[windowing.brain_window,
                                                                 windowing.acute_stroke_window,
@@ -180,7 +183,13 @@ class InfarctDataset3D(Dataset):
     
     def get_window_channels(self, scan):
         scan_windowed = [torch.tensor(self.window_as_channel(scan[i].numpy())).unsqueeze(0) for i in range(scan.shape[0])]
-        scan_windowed = torch.cat(scan_windowed, dim=0).permute(3,1,2,0)
+        scan_windowed = torch.cat(scan_windowed, dim=0) 
+        if scan_windowed.shape[3] == 1:
+            scan_windowed = scan_windowed.permute(3,0,1,2)
+            self.spatial_dim_idx = 1
+        else:
+            scan_windowed = scan_windowed.permute(3,1,2,0)
+            self.spatial_dim_idx = 3
         return scan_windowed
     
     def get_foreground_crop(self, sitk_arr, annot_arr):
@@ -245,11 +254,11 @@ class InfarctDataset3D(Dataset):
             if seed_ < 0.6:
                 random_rotate = transforms.RandomAffine(scale=(0.9,1.3), degrees=(-45,45), interpolation=transforms.InterpolationMode.BILINEAR)
                 if self.args.dataset_type == "3D":
-                    input_scan, target = apply_torch_transform_3d(random_rotate, state, 3, input_scan, target)
+                    input_scan, target = apply_torch_transform_3d(random_rotate, state, self.spatial_dim_idx, input_scan, target)
             elif seed_ > 0.5:
                 random_flip = transforms.RandomHorizontalFlip(p=1)
                 if self.args.dataset_type == "3D":
-                    input_scan, target = apply_torch_transform_3d(random_flip, state, 3, input_scan, target)
+                    input_scan, target = apply_torch_transform_3d(random_flip, state, self.spatial_dim_idx, input_scan, target)
         
         elif self.args.extra_augs:
             # Random transforms
