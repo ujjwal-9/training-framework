@@ -65,7 +65,7 @@ tb_logger = pl_loggers.TensorBoardLogger(save_dir=log_dir)
 # csv_logger = pl_loggers.CSVLogger(save_dir="logs/")
 
 lr_monitor = LearningRateMonitor(logging_interval='step')
-early_stopping = EarlyStopping(monitor="valid_loss", patience=10)
+early_stopping = EarlyStopping(monitor="valid_loss", patience=args.patience)
 
 
 trainer = pl.Trainer(accelerator='gpu',

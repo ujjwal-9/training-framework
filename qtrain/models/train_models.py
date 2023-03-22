@@ -56,7 +56,7 @@ class qSegmentation(pl.LightningModule):
     def setup_metrics(self):
         self.metrics = {}
         for metric in self.args.metrics:
-            key = str(metric).split("(")[0]
+            key = str(metric).split(" ")[0].split(".")[-1]
             self.metrics[key] = metric
         return
 
@@ -112,5 +112,7 @@ class qSegmentation(pl.LightningModule):
 
         optimizer = self.args.optimizer(self.model.parameters(), **self.args.optimizer_params)
         scheduler = self.args.scheduler(optimizer, **self.args.scheduler_params)
+        if 'ReduceLROnPlateau' in str(scheduler):
+            return [optimizer], [{'scheduler': scheduler, 'monitor': 'valid_loss'}]
             
         return [optimizer], [scheduler]
