@@ -18,11 +18,12 @@ from glob import glob
 from pprint import pprint
 from pydicom import dcmread
 from natsort import natsorted
-from sklearn.metrics import roc_curve
-from tqdm import tqdm
+from sklearn.metrics import roc_curve, confusion_matrix
+from tqdm.notebook import tqdm
 from collections import defaultdict
 
-from skimage import io, color
+from skimage import io
+from skimage.color import label2rgb
 from skimage.segmentation import mark_boundaries
 
 import torch
@@ -118,7 +119,7 @@ def get_ct_batch_for_studyuid(filepath, sampling_dir="/data_nas2/processed/HeadC
         else:
             return None
 
-def get_sqlite_db(sqlite_path="/home/users/ujjwal.upadhyay/packages/head-ct-annotations-database/database/data/all_studies.sqlite"):
+def get_sqlite_db(sqlite_path="/home/users/ujjwal.upadhyay/packages/qer_annotation_db/database/data/all_studies.sqlite"):
     sql_query = "SELECT * FROM NLP"
     conn = sqlite3.connect(sqlite_path)
     df = pd.read_sql(sql_query, con=conn)
@@ -146,13 +147,13 @@ def find_optimal_threshold(actual_col, pred_col) -> float:
     return thresholds[best_threshold_index]
 
 
-def infer_series_classifier(img_based=True, body_part="brain"):
+def infer_series_classifier(img_based=True):
     validation_conf = {
         "isc": {
             "use": img_based
         }
     }
-    infer = Infer(body_part, validation_conf)
+    infer = Infer(validation_conf)
     return infer
     
     
@@ -261,13 +262,13 @@ def run_models(sitk_img, models, names, items):
 
 def thresholding(pred, threshold=0.01):
     pred[pred > threshold] = 1
-    pred[pred < threshold] = 0
+    pred[pred <= threshold] = 0
 
     return pred.int()
 
 def thresholding_numpy(pred, threshold=0.01):
     pred[pred > threshold] = 1
-    pred[pred < threshold] = 0
+    pred[pred <= threshold] = 0
 
     return pred.astype("int")
 
@@ -287,59 +288,54 @@ def read_series(series, path):
 def resize(size=(512,512), mode=tfms.InterpolationMode.NEAREST):
     return tfms.Resize(size, mode)
 
+def conf_fn(y, y_pred):
+    conf = confusion_matrix(y, y_pred)
+    tn, fp, fn, tp = conf.ravel()
+    specificity = tn / (tn+fp)
+    sensitivity = tp / (tp+fn)
+    return [sensitivity, specificity]
 
-def plot_model_output(scan_arr, model_output, idx, threshold=0.7, ww=80, wl=40, color=True, figsize=(16,8)):
-    window = windowing.window_generator(ww, wl)
-    target_img = windowing.brain_window(scan_arr[idx])
-    input_img = window(scan_arr[idx])
-    acute_stroke = windowing.acute_stroke_window(scan_arr[idx])
-    
-    f = plt.figure(figsize=figsize)
-    
-    plt.subplot(131, title = "Input Slice")
-    plt.imshow(input_img, 'gray', interpolation='none')
-    
-    plt.subplot(132, title = "Acute Stroke Window")
-    plt.imshow(acute_stroke, 'gray', interpolation='none')
 
-    if model_output is not None:
-        plt.subplot(133, title = "Predicted Mask")
-        if color:
-            masked_img_out = color.label2rgb(model_output[idx], target_img, colors=[(255,0,0),(0,0,255)], alpha=0.01, bg_label=0, bg_color=None)
-        else:
-            masked_img_out = mark_boundaries(input_img, model_output[idx].astype("int"), color=(255,255,255))
-        plt.imshow(masked_img_out)
-    
-    plt.show()
-    
-def plot_all_scan(scan_arr, model_output=None, threshold=0.7, color=True, figsize=(16,8)):
+
+def plot_masked_output(scan_arr, mask_arr, do_windowing=True, color=True, threshold=None, figsize=(16,8)):
     total_slice = scan_arr.shape[0]
-    threshold_dynamic = None
-    print(threshold)
-    if threshold == "NA":
-        threshold_slider = threshold
+    def callback(idx, ww=40, wl=40):
+        scan = scan_arr[idx]
+        mask = mask_arr[idx]
+        if do_windowing:
+            window = windowing.window_generator(ww, wl)
+            scan = window(scan)
+        if threshold is not None:
+            mask = thresholding_numpy(mask, threshold)
+        else:
+            mask = thresholding_numpy(mask, 0)
+
+        f = plt.figure(figsize=figsize)
+
+        plt.subplot(121, title = "Input Slice")
+        plt.imshow(scan, 'gray', interpolation='none')
+
+        plt.subplot(122, title = "Masked Output")
+        if color:
+            masked_scan = label2rgb(mask, scan, kind='overlay', alpha=0.2, colors=['red','green','blue','cyan','magenta','yellow'])
+        else:
+            masked_scan = mark_boundaries(scan, mask)
+        plt.imshow(masked_scan)
+
+        plt.show()
+    
+    if do_windowing:
+        interact(
+            callback,
+            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
+            ww = widgets.IntSlider(value=80, min=0, max=600, step=1),
+            wl = widgets.IntSlider(value=40, min=0, max=600, step=1)
+        )
     else:
-        threshold_slider = widgets.FloatSlider(value=threshold, min=0, max=1, step=0.01)
-        
-    def callback(idx, threshold, ww, wl):
-        model_out_fixed = None
-        if model_output is not None:
-            if threshold == "NA":
-                model_out_fixed = model_output
-                print("HERE")
-            else:
-                if threshold_dynamic is None or threshold_dynamic != threshold:
-                    model_out_fixed = resize(torch.from_numpy(thresholding_numpy(model_output, threshold))).numpy()
-                    print(f"INFARCTS: {np.argwhere(model_out_fixed.sum(axis=(1,2))>0)[:,0]}")
-        plot_model_output(scan_arr, model_out_fixed, idx, threshold, ww, wl, color, figsize)
-        
-    interact(
-        callback,
-        idx = widgets.IntSlider(value=0, min=0, max=total_slice-1, step=1),
-        threshold = threshold_slider,
-        ww = widgets.IntSlider(value=80, min=0, max=600, step=1),
-        wl = widgets.IntSlider(value=40, min=0, max=600, step=1)
-    )
+        interact(
+            callback,
+            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
+        )
 
 def plot_scan(scan_arr, do_windowing=True, figsize=(16,8)):
     total_slice = scan_arr.shape[0]
@@ -385,170 +381,6 @@ def plot_side_by_side(scan_arrs, do_windowing=True, figsize=(16,8)):
         else:
             plt.imshow(scan_arrs[1][idx], cmap="gray")
         plt.show()
-    if do_windowing:
-        interact(
-            callback,
-            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
-            ww = widgets.IntSlider(value=80, min=0, max=600, step=1),
-            wl = widgets.IntSlider(value=40, min=0, max=600, step=1)
-        )
-    else:
-        interact(
-            callback,
-            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
-        )
-        
-def plot_aspects_output(scan_arrs, do_windowing=True, figsize=(16,8)):
-    total_slice = scan_arrs[0].shape[0]
-    def callback(idx, ww=40, wl=80):
-        if do_windowing:
-            window = windowing.window_generator(ww, wl)
-        plt.figure(figsize=figsize)
-        plt.axis("off")
-        
-        plt.subplot(1,2,1)
-        if do_windowing:
-            windowed_scan = window(scan_arrs[0][idx])
-            plt.imshow(windowed_scan, cmap="gray")
-        else:
-            plt.imshow(scan_arrs[0][idx], cmap="gray")
-        
-        plt.subplot(1,2,2)
-        if do_windowing:
-            out = mark_boundaries(windowed_scan, scan_arrs[1][idx].astype("int"), color=(255,255,255))
-            plt.imshow(out, cmap="gray")
-        else:
-            out = mark_boundaries(scan_arrs[0][idx], scan_arrs[1][idx].astype("int"), color=(255,255,255))
-            plt.imshow(scan_arrs[1][idx], cmap="gray")
-        plt.show()
-    
-    if do_windowing:
-        interact(
-            callback,
-            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
-            ww = widgets.IntSlider(value=80, min=0, max=600, step=1),
-            wl = widgets.IntSlider(value=40, min=0, max=600, step=1)
-        )
-    else:
-        interact(
-            callback,
-            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
-        )
-        
-def plot_infarcts_output(scan_arrs, do_windowing=True, figsize=(16,8)):
-    total_slice = scan_arrs[0].shape[0]
-    def callback(idx, ww=40, wl=80):
-        if do_windowing:
-            window = windowing.window_generator(ww, wl)
-        plt.figure(figsize=figsize)
-        plt.axis("off")
-        
-        plt.subplot(1,3,1)
-        if do_windowing:
-            windowed_scan = window(scan_arrs[0][idx])
-            plt.imshow(windowed_scan, cmap="gray")
-        else:
-            plt.imshow(scan_arrs[0][idx], cmap="gray")
-        
-        plt.subplot(1,3,2)
-        if do_windowing:
-            out = color.label2rgb(scan_arrs[1][idx]==1, windowed_scan, colors=[(255,0,0),(0,0,255)], alpha=0.01, bg_label=0, bg_color=None)
-            plt.imshow(out, cmap="gray")
-        else:
-            out = color.label2rgb(scan_arrs[1][idx], windowed_scan, colors=[(255,0,0),(0,0,255)], alpha=0.01, bg_label=0, bg_color=None)
-            plt.imshow(scan_arrs[1][idx], cmap="gray")
-        
-        plt.subplot(1,3,3)
-        if do_windowing:
-            out = color.label2rgb(scan_arrs[1][idx]==2, windowed_scan, colors=[(255,0,0),(0,0,255)], alpha=0.01, bg_label=0, bg_color=None)
-            plt.imshow(out, cmap="gray")
-        else:
-            out = color.label2rgb(scan_arrs[1][idx], windowed_scan, colors=[(255,0,0),(0,0,255)], alpha=0.01, bg_label=0, bg_color=None)
-            plt.imshow(scan_arrs[1][idx], cmap="gray")
-        plt.show()
-    
-    if do_windowing:
-        interact(
-            callback,
-            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
-            ww = widgets.IntSlider(value=80, min=0, max=600, step=1),
-            wl = widgets.IntSlider(value=40, min=0, max=600, step=1)
-        )
-    else:
-        interact(
-            callback,
-            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
-            label = widgets.IntSlider(value=1, min=0, max=2, step=1)
-        )
-        
-def plot_two_aspects_output(scan_arrs, do_windowing=True, figsize=(16,8)):
-    total_slice = scan_arrs[0].shape[0]
-    def callback(idx, ww=40, wl=80):
-        if do_windowing:
-            window = windowing.window_generator(ww, wl)
-            windowed_scan = window(scan_arrs[0][idx])
-        
-        plt.figure(figsize=figsize)
-        plt.axis("off")
-        
-        plt.subplot(1,2,1)
-        if do_windowing:
-            out_1 = mark_boundaries(windowed_scan, scan_arrs[1][idx].astype("int"), color=(255,255,255))
-            plt.imshow(out_1, cmap="gray")
-        else:
-            out = mark_boundaries(scan_arrs[0][idx], scan_arrs[1][idx].astype("int"), color=(255,255,255))
-            plt.imshow(scan_arrs[1][idx], cmap="gray")
-        
-        plt.subplot(1,2,2)
-        if do_windowing:
-            out_2 = mark_boundaries(windowed_scan, scan_arrs[2][idx].astype("int"), color=(255,255,255))
-            plt.imshow(out_2, cmap="gray")
-        else:
-            out_2 = mark_boundaries(scan_arrs[0][idx], scan_arrs[2][idx].astype("int"), color=(255,255,255))
-            plt.imshow(scan_arrs[2][idx], cmap="gray")
-        plt.show()
-    
-    if do_windowing:
-        interact(
-            callback,
-            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
-            ww = widgets.IntSlider(value=80, min=0, max=600, step=1),
-            wl = widgets.IntSlider(value=40, min=0, max=600, step=1)
-        )
-    else:
-        interact(
-            callback,
-            idx = widgets.IntSlider(value=int(total_slice/2), min=0, max=total_slice-1, step=1),
-        )
-
-
-        
-def plot_aspects_and_infarcts(scan_arrs, do_windowing=True, figsize=(16,8)):
-    total_slice = scan_arrs[0].shape[0]
-    def callback(idx, ww=40, wl=80):
-        if do_windowing:
-            window = windowing.window_generator(ww, wl)
-        plt.figure(figsize=figsize)
-        plt.axis("off")
-        
-        plt.subplot(1,2,1)
-        if do_windowing:
-            windowed_scan = window(scan_arrs[0][idx])
-            plt.imshow(windowed_scan, cmap="gray")
-        else:
-            plt.imshow(scan_arrs[0][idx], cmap="gray")
-        
-        plt.subplot(1,2,2)
-        if do_windowing:
-            out = mark_boundaries(windowed_scan, scan_arrs[1][idx].astype("int"), color=(255,255,255))
-            masked_img_out = color.label2rgb(scan_arrs[2][idx], out, colors=[(255,0,0),(0,0,255)], alpha=0.01, bg_label=0, bg_color=None)
-            plt.imshow(masked_img_out, cmap="gray")
-        else:
-            out = mark_boundaries(scan_arrs[0][idx], scan_arrs[1][idx].astype("int"), color=(255,255,255))
-            masked_img_out = color.label2rgb(scan_arrs[2][idx], out, colors=[(255,0,0),(0,0,255)], alpha=0.01, bg_label=0, bg_color=None)
-            plt.imshow(masked_img_out, cmap="gray")
-        plt.show()
-    
     if do_windowing:
         interact(
             callback,

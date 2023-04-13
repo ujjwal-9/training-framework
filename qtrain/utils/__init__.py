@@ -5,9 +5,11 @@ from torchvision import transforms as tfms
 def fix_sitk_arr_shape(arr, req_shape=(512,512)):
     return tfms.Resize(req_shape)(torch.Tensor(arr)).numpy()
 
-def apply_torch_transform(transform, state, input_tensor, target_tensor):
+def apply_torch_transform(transform, state, input_tensor, target_tensor=None):
     torch.set_rng_state(state)
     input_tensor = transform(input_tensor)
+    if target_tensor is None:
+        return input_tensor, None
     torch.set_rng_state(state)
     transform.interpolation = tfms.InterpolationMode.NEAREST
     target_tensor = transform(target_tensor)
@@ -21,12 +23,14 @@ def rotation_4d_metadata(dim, axis):
     redo_axis_idx.insert(axis, 0)
     return axis_idx, redo_axis_idx
 
-def apply_torch_transform_3d(transform, state, axis, input_tensor, target_tensor):
+def apply_torch_transform_3d(transform, state, axis, input_tensor, target_tensor=None):
     axis_idx, redo_axis_idx = rotation_4d_metadata(input_tensor.shape[0]+1, axis)
     input_tensor = input_tensor.permute(axis_idx)
     for i in range(input_tensor.shape[0]):
-        input_tensor[i], target_tensor_ = apply_torch_transform(transform, state, input_tensor[i], target_tensor[i].unsqueeze(0))
-        target_tensor[i] = target_tensor_[0]
+        target_tensor_ = target_tensor[i].unsqueeze(0) if target_tensor is not None else None
+        input_tensor[i], target_tensor_ = apply_torch_transform(transform, state, input_tensor[i], target_tensor_)
+        if target_tensor is not None:
+            target_tensor[i] = target_tensor_[0] 
     input_tensor = input_tensor.permute(redo_axis_idx)
     return input_tensor, target_tensor
 
@@ -104,5 +108,7 @@ def find_random_crop_dim(full_vol_dim, crop_size):
 def get_croped_3d_volume(input_volume, gt_volume, crop_dims):
     crop_size= find_random_crop_dim(input_volume.shape, crop_dims)
     input_volume_ = crop_3d_volume(input_volume, crop_size, crop_dims)
+    if gt_volume is None:
+        return input_volume_, None
     gt_volume_ = crop_3d_volume(gt_volume, crop_size, crop_dims)
     return input_volume_, gt_volume_

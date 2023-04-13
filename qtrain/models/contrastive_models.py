@@ -3,8 +3,6 @@ import warnings
 import munch
 import numpy as np
 
-import qtrain
-import monai
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,7 +13,7 @@ import pytorch_lightning as pl
 import segmentation_models_pytorch as smp
 
 
-class qSegmentation(pl.LightningModule):
+class qContrastive(pl.LightningModule):
     def __init__(self, args, train=True):
         super().__init__()
         self.save_hyperparameters()
@@ -23,18 +21,14 @@ class qSegmentation(pl.LightningModule):
         
         if "mode" not in self.args.keys():
             warnings.warn(" `mode` not in arguments file, setting it to `multilabel` ")
-            self.args["mode"] = "multilabel"
+            self.args.mode = "multilabel"
 
         self.setup_model(train)
         self.setup_losses()
         self.setup_metrics()
         
     def setup_model(self, train=True):
-        if self.args.model_params_star_pass:
-            self.model = self.args.model(**self.args.model_params).double()
-        else:
-            self.model = self.args.model(self.args).double()
-        
+        self.model = self.args.model(**self.args.model_params).double()
         if train:
             self.model.train()
         else:
@@ -42,10 +36,18 @@ class qSegmentation(pl.LightningModule):
 
     def setup_losses(self):
         self.loss_contrib = self.args.loss_contrib
-        self.losses = self.args.losses
+        self.losses = {}
+        for loss in self.args.losses:
+            key = str(loss).split("(")[0]
+            self.losses[key] = loss
+        return
 
     def setup_metrics(self):
-        self.metrics = self.args.metrics
+        self.metrics = {}
+        for metric in self.args.metrics:
+            key = str(metric).split(" ")[0].split(".")[-1]
+            self.metrics[key] = metric
+        return
 
     def forward(self, z):
         z = self.model(z)
@@ -55,7 +57,7 @@ class qSegmentation(pl.LightningModule):
         computed_losses = {}
         gt_segmentation_map = gt_segmentation_map.double()
         for i, loss in enumerate(self.losses):
-            computed_losses[prefix+loss] = self.args.loss_contrib[loss]*self.losses[loss](model_output, gt_segmentation_map)
+            computed_losses[prefix+loss] = self.args.loss_contrib[i]*self.losses[loss](model_output, gt_segmentation_map)
         loss = torch.sum(torch.stack(list(computed_losses.values())))
         computed_losses[prefix+"loss"] = loss
         self.log_dict(computed_losses)
@@ -76,11 +78,8 @@ class qSegmentation(pl.LightningModule):
         return computed_metric
 
     def compute_batch(self, batch, batch_idx, prefix='train_'):
-        ct, gt_segmentation_map = batch
-        if self.args.dataset_type == "3D":
-            output = self(ct)[:,0,...].permute(0,3,1,2).contiguous().double()
-        elif self.args.dataset_type == "2D":
-            output = self(ct)["masks"].double()
+        scans, target = batch
+        outputs = self(scans[0], scans[1])
         loss = self.loss_fn(output, gt_segmentation_map, prefix)
         metric = self.metric_fn(output, gt_segmentation_map, prefix)
         return loss, metric
