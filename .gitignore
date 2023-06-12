@@ -3,7 +3,7 @@ nbs
 configs
 data
 logs
-
+scripts/backup_logs/
 
 
 # Byte-compiled / optimized / DLL files

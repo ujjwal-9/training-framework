@@ -18,22 +18,22 @@ from glob import glob
 from pprint import pprint
 from pydicom import dcmread
 from natsort import natsorted
-from sklearn.metrics import roc_curve, confusion_matrix
 from tqdm.notebook import tqdm
 from collections import defaultdict
 
 from skimage import io
 from skimage.color import label2rgb
 from skimage.segmentation import mark_boundaries
+from sklearn.metrics import roc_curve, confusion_matrix
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as tfms
 
 from qure_series_classifier.predict import Infer
-from qer.utils.postprocessing import mask_volume
-from qer_utils.preprocessing import windowing, brain_window
 from qer_utils.imageoperations import resampler, imread_3d
+from qer_utils.preprocessing import windowing, brain_window
 
 from ipywidgets import interact, widgets
 
@@ -42,6 +42,7 @@ import qer
 from qer.predictor import get_predictions
 qer.settings.checkpoints_path = "/home/users/ujjwal.upadhyay/packages/tests/qer/resources/checkpoints/"
 
+from qer.utils.postprocessing import mask_volume
 from qer.predictor.utils.model_config import default_model_configs
 
 
@@ -85,6 +86,13 @@ def create_report_slice(report, study_uid, series, series_dict, save_path, page_
         dcm_file.save_as(out_dcm_path)
         os.system(f"rm {save_file_path}")
     return report_slices
+
+def check_reports(series, db):
+    series_dict = db.dicoms.find_one({"_id": series})
+    study = series_dict['StudyInstanceUID']
+    study_dict = db.dicoms.find_one({"_id": study})
+    return study_dict['Report']['Text'], study, series_dict, study_dict
+
 
 def get_qer_config(query=None, model_name=None):
     if query is None:
@@ -293,7 +301,7 @@ def conf_fn(y, y_pred):
     tn, fp, fn, tp = conf.ravel()
     specificity = tn / (tn+fp)
     sensitivity = tp / (tp+fn)
-    return [sensitivity, specificity]
+    return conf, sensitivity, specificity
 
 
 

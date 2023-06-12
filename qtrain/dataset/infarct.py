@@ -18,6 +18,7 @@ from qtrain.utils import windowing
 from torchvision import transforms
 from monai.transforms import CropForeground
 from torch.utils.data import Dataset, DataLoader
+import pytorchvideo.transforms as video_tfms
 
 
 from tqdm import tqdm
@@ -275,14 +276,13 @@ class InfarctDataset3D_only_cls(Dataset):
         self.input_shape = [self.args.img_size, self.args.img_size]
         self.window_as_channel = self.window_channels()
         if init_dataset:
-            self.initialize_dataset(self.args.datapath)
+            self.initialize_dataset(self.args.data)
 
     def get_studyuid(self, index):
         return self.dataset.loc[index,"series"]
     
-    def append_dataset(self, scan, annotation, label):
+    def append_dataset(self, scan, label):
         self.datapath.append(scan)
-        self.targetpath.append(annotation)
         self.labels.append(label)
     
     def initialize_dataset(self, datapath):
@@ -292,24 +292,20 @@ class InfarctDataset3D_only_cls(Dataset):
         self.dataset = self.dataset[self.dataset['status'] == self.run_type].reset_index(drop=True)
 
         self.datapath = []
-        self.targetpath = []
         self.labels = []
         
         if self.run_type in ['train', 'test', 'valid']:
-            if self.args.fast_dev_run == True:
-                counter = self.args.fast_batch_size
-            else:
-                counter = len(self.dataset)
+            counter = len(self.dataset)
             
-            self.max_classes = 0
+            self.max_classes = 1
             for index in tqdm(range(counter), desc=f"{self.run_type} data"):
-                filepath, annotpath, labels = self.dataset.loc[index,"filepath"], self.dataset.loc[index,"annotpath"], self.dataset.loc[index,"labels"]
-                n_classes = len(labels)
-                if n_classes > self.max_classes:
-                    self.max_classes = n_classes
-                self.append_dataset(filepath, annotpath, labels)
-        if self.args.mode == "multiclass":
-            self.max_classes += 1
+                filepath, labels = self.dataset.loc[index,"filepath"], self.dataset.loc[index,"annotation"]
+                self.append_dataset(filepath, labels)
+        
+        from collections import Counter
+        print(Counter(self.labels))
+        
+        
         print(f"{len(self.datapath)} scans present in {self.run_type} data belonging to {self.max_classes} classes\n")
 
 
@@ -375,29 +371,26 @@ class InfarctDataset3D_only_cls(Dataset):
         return np.moveaxis(cropped_sitk_arr.numpy(),0,-1)
     
     def process(self, index):
-        annotation = self.process_annotation_label(index)
-        ct_scan = sitk.GetArrayFromImage(sitk.ReadImage(self.datapath[index]))
+        annotation = self.labels[index]
+        ct_scan = np.load(self.datapath[index])
+        # ct_scan = sitk.GetArrayFromImage(sitk.ReadImage(self.datapath[index]))
         ct_scan = self.get_foreground_crop(ct_scan)
         ct_scan = self.initialize_transform()(ct_scan)
-        if ct_scan.shape[0] <= self.args.n_slices:
-            ct_scan = torch.cat([ct_scan, torch.zeros(self.args.n_slices - ct_scan.shape[0] + 1, *ct_scan.shape[1:])])
-        if self.crop:
-            ct_scan, _ = self.get_crop(ct_scan, None)
+        if ct_scan.shape[0] < self.args.n_slices:
+            ct_scan = torch.cat([ct_scan, torch.zeros(self.args.n_slices - ct_scan.shape[0], *ct_scan.shape[1:])])
+        elif ct_scan.shape[0] > self.args.n_slices:
+            start_slice = np.random.randint(0, ct_scan.shape[0] - self.args.n_slices)
+            ct_scan = ct_scan[start_slice:start_slice+self.args.n_slices]
+        # if self.crop:
+        #     ct_scan, _ = self.get_crop(ct_scan, None)
         ct_scan = self.get_window_channels(ct_scan)
         return ct_scan, annotation
-    
-    def process_annotation_label(self, index):
-        labels = list(self.labels[index].values())[0]
-        annotation = 0
-        if len(labels) > 0:
-            annotation = 1
-        return annotation
         
     def excute_augmentations(self, ct_scan):
+        ct_scan = ct_scan.permute(3,0,1,2) 
         if self.run_type == 'train' and self.args.augmentation:
-            if random.random() < 0.35:
-                ct_scan, annotation = self.train_transforms(ct_scan) 
-        ct_scan = ct_scan.permute(3,0,1,2)
+            ct_scan = self.train_transforms(ct_scan)
+        # ct_scan = ct_scan.permute(1,0,2,3)
         return ct_scan
 
     def __getitem__(self, index):
@@ -407,24 +400,91 @@ class InfarctDataset3D_only_cls(Dataset):
     def __len__(self):
         return len(self.datapath)
     
-    def train_transforms(self, input_scan, target):
-        seed_ = random.random()
-        state = torch.get_rng_state()
-        if not self.args.extra_augs:
-            if seed_ < 0.6:
-                random_rotate = transforms.RandomAffine(scale=(0.9,1.3), degrees=(-45,45), interpolation=transforms.InterpolationMode.BILINEAR)
-                if self.args.dataset_type == "3D":
-                    input_scan, target = apply_torch_transform_3d(random_rotate, state, self.spatial_dim_idx, input_scan, target=None)
-            elif seed_ > 0.5:
-                random_flip = transforms.RandomHorizontalFlip(p=1)
-                if self.args.dataset_type == "3D":
-                    input_scan, target = apply_torch_transform_3d(random_flip, state, self.spatial_dim_idx, input_scan, target=None)
+    # def train_transforms(self, input_scan):
+    #     AUG_CONFIG = {
+    #         "HEAVY_AUG": [0.8, 0.5, 0.6, 0.3, 0.4, 0.5, 0.6, 0.1, 0.4, 0.5],
+    #         "MEDIUM_AUG": [0.5, 0.3, 0.3, 0.1, 0.2, 0.3, 0.3, 0.1, 0.2, 0.3],
+    #         "LIGHT_AUG": [0.3, 0.2, 0.2, 0.05, 0.1, 0.1, 0.1, 0.0, 0.1, 0.2]
+    #     }
+    #     aug_probablities = AUG_CONFIG[self.args.augmentation_config]
+
+    #     if random.random() < aug_probablities[0]:
+    #         input_scan = transforms.RandomAffine(scale=(0.9,1.3), degrees=(-45,45), interpolation=transforms.InterpolationMode.BILINEAR)(input_scan)
+
+    #     if random.random() < aug_probablities[1]:
+    #         input_scan = transforms.RandomHorizontalFlip(p=1)(input_scan)
+
+    #     if random.random() < 0.6:
+    #         input_scan = transforms.RandomPerspective(distortion_scale=0.3, p=1, interpolation=transforms.InterpolationMode.BILINEAR, fill=0)(input_scan)   
         
-        elif self.args.extra_augs:
-            # Random transforms
-            if seed_ < 0.6:
-                input_scan = transforms.GaussianBlur(5, sigma=(0.1, 2.0))(input_scan)
+    #     if random.random() < 0.3:
+    #         input_scan = transforms.ElasticTransform(alpha=50.0, sigma=5.0, interpolation=transforms.InterpolationMode.BILINEAR, fill=0)(input_scan)   
+
+    #     if random.random() < 0.4:
+    #         input_scan = transforms.ColorJitter(brightness=0.5, contrast=0.6, saturation=0.7, hue=0.3)(input_scan)
+
+    #     if random.random() < 0.5:
+    #         input_scan = transforms.GaussianBlur(5, sigma=(0.1, 2.0))(input_scan)
+
+    #     if random.random() < 0.6:
+    #         input_scan = transforms.RandomAdjustSharpness(sharpness_factor=0.6, p=1)(input_scan)
+
+    #     if random.random() < 0.1:
+    #         input_scan = transforms.RandomSolarize(threshold=0.85, p=1)(input_scan)
+
+    #     if random.random() < 0.4:
+    #         input_scan = input_scan.to(torch.float32)
+    #         input_scan = video_tfms.functional.random_resized_crop(input_scan, target_height=128, target_width=128, scale=(1,1), aspect_ratio=(1,1), shift=False, log_uniform_ratio=True, interpolation='bilinear', num_tries=10)
+
+    #     if random.random() < 0.5:
+    #         input_scan = input_scan.to(torch.float32)
+    #         input_scan = video_tfms.RandomShortSideScale(128, 300)(input_scan)
             
+            
+    #     input_scan = transforms.Resize(self.input_shape, transforms.InterpolationMode.BILINEAR)(input_scan)
+    #     return input_scan
+
+    def train_transforms(self, input_scan):
+        AUG_CONFIG = {
+            "HEAVY_AUG": [0.8, 0.5, 0.6, 0.3, 0.4, 0.5, 0.6, 0.1, 0.4, 0.5],
+            "MEDIUM_AUG": [0.5, 0.3, 0.3, 0.1, 0.2, 0.3, 0.3, 0.1, 0.2, 0.3],
+            "LIGHT_AUG": [0.3, 0.2, 0.2, 0.05, 0.1, 0.1, 0.1, 0.0, 0.1, 0.2]
+        }
+        aug_probabilities = AUG_CONFIG[self.args.augmentation_config]
+
+        if random.random() < aug_probabilities[0]:
+            input_scan = transforms.RandomAffine(scale=(0.9, 1.3), degrees=(-45, 45), interpolation=transforms.InterpolationMode.BILINEAR)(input_scan)
+
+        if random.random() < aug_probabilities[1]:
+            input_scan = transforms.RandomHorizontalFlip(p=1)(input_scan)
+
+        if random.random() < aug_probabilities[2]:
+            input_scan = transforms.RandomPerspective(distortion_scale=0.3, p=1, interpolation=transforms.InterpolationMode.BILINEAR, fill=0)(input_scan)
+
+        if random.random() < aug_probabilities[3]:
+            input_scan = transforms.ElasticTransform(alpha=50.0, sigma=5.0, interpolation=transforms.InterpolationMode.BILINEAR, fill=0)(input_scan)
+
+        if random.random() < aug_probabilities[4]:
+            input_scan = transforms.ColorJitter(brightness=0.5, contrast=0.6, saturation=0.7, hue=0.3)(input_scan)
+
+        if random.random() < aug_probabilities[5]:
+            input_scan = transforms.GaussianBlur(5, sigma=(0.1, 2.0))(input_scan)
+
+        if random.random() < aug_probabilities[6]:
+            input_scan = transforms.RandomAdjustSharpness(sharpness_factor=0.6, p=1)(input_scan)
+
+        if random.random() < aug_probabilities[7]:
+            input_scan = transforms.RandomSolarize(threshold=0.85, p=1)(input_scan)
+
+        if random.random() < aug_probabilities[8]:
+            input_scan = input_scan.to(torch.float32)
+            input_scan = video_tfms.functional.random_resized_crop(input_scan, target_height=128, target_width=128, scale=(1, 1), aspect_ratio=(1, 1), shift=False, log_uniform_ratio=True, interpolation='bilinear', num_tries=10)
+
+        if random.random() < aug_probabilities[9]:
+            input_scan = input_scan.to(torch.float32)
+            input_scan = video_tfms.RandomShortSideScale(128, 300)(input_scan)
+
+        input_scan = transforms.Resize(self.input_shape, transforms.InterpolationMode.BILINEAR)(input_scan)
         return input_scan
 
 
@@ -603,11 +663,11 @@ class InfarctDataset3D_cls(Dataset):
             if seed_ < 0.6:
                 random_rotate = transforms.RandomAffine(scale=(0.9,1.3), degrees=(-45,45), interpolation=transforms.InterpolationMode.BILINEAR)
                 if self.args.dataset_type == "3D":
-                    input_scan, target = apply_torch_transform_3d(random_rotate, state, self.spatial_dim_idx, input_scan, target=None)
+                    input_scan, target = apply_torch_transform_3d(random_rotate, state, self.spatial_dim_idx, input_scan, None)
             elif seed_ > 0.5:
                 random_flip = transforms.RandomHorizontalFlip(p=1)
                 if self.args.dataset_type == "3D":
-                    input_scan, target = apply_torch_transform_3d(random_flip, state, self.spatial_dim_idx, input_scan, target=None)
+                    input_scan, target = apply_torch_transform_3d(random_flip, state, self.spatial_dim_idx, input_scan, None)
         
         elif self.args.extra_augs:
             # Random transforms
@@ -986,22 +1046,46 @@ class InfarctDataset2D(Dataset):
         seed_ = random.random()
         state = torch.get_rng_state()
         if not self.args.extra_augs:
-            if seed_ < 0.6:
+            if random.random() < 0.5:
                 random_rotate = transforms.RandomAffine(scale=(0.9,1.3), degrees=(-45,45), interpolation=transforms.InterpolationMode.BILINEAR)
                 if self.args.dataset_type == "2D":
                     input_scan, target = apply_torch_transform(random_rotate, state, input_scan, target)
                 if self.args.dataset_type == "3D":
                     input_scan, target = apply_torch_transform_3d(random_rotate, state, self.spatial_dim_idx, input_scan, target)
-            elif seed_ > 0.5:
+            if random.random() < 0.5:
                 random_flip = transforms.RandomHorizontalFlip(p=1)
                 if self.args.dataset_type == "2D":
                     input_scan, target = apply_torch_transform(random_rotate, state, input_scan, target)
                 if self.args.dataset_type == "3D":
                     input_scan, target = apply_torch_transform_3d(random_flip, state, self.spatial_dim_idx, input_scan, target)
         
-        elif self.args.extra_augs:
+        
+        if self.args.extra_augs:
             # Random transforms
-            if seed_ < 0.6:
-                input_scan = transforms.GaussianBlur(5, sigma=(0.1, 2.0))(input_scan)
+            if random.random() < 0.6:
+                input_scan = transforms.RandomPerspective(distortion_scale=0.3, p=1, interpolation=transforms.InterpolationMode.BILINEAR, fill=0)(input_scan)   
             
+            if random.random() < 0.3:
+                input_scan = transforms.ElasticTransform(alpha=50.0, sigma=5.0, interpolation=transforms.InterpolationMode.BILINEAR, fill=0)(input_scan)   
+
+            if random.random() < 0.5:
+                input_scan = transforms.ColorJitter(brightness=0.5, contrast=0.6, saturation=0.7, hue=0.3)(input_scan)
+
+            if random.random() < 0.5:
+                input_scan = transforms.GaussianBlur(5, sigma=(0.1, 2.0))(input_scan)
+
+            if random.random() < 0.6:
+                input_scan = transforms.RandomAdjustSharpness(sharpness_factor=0.6, p=1)(input_scan)
+
+            if random.random() < 0.1:
+                input_scan = transforms.RandomSolarize(threshold=0.85, p=1)(input_scan)
+
+            if random.random() < 0.5:
+                input_scan = video_tfms.RandomShortSideScale(128, 300)(input_scan)
+            
+            if random.random() < 0.5:
+                input_scan = video_tfms.functional.random_resized_crop(input_scan, target_height=128, target_width=128, scale=(1,1), aspect_ratio=(1,1), shift=False, log_uniform_ratio=True, interpolation='bilinear', num_tries=10)
+            
+                
+
         return input_scan, target

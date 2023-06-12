@@ -47,7 +47,7 @@ dm = args.dataset_module(args)
 
 args.num_classes = dm.num_classes
 
-model =  qSegmentation(args)
+model =  args.trainer(args)
 if args.mode == "multiclass":
     checkpoint_callback = pl.callbacks.ModelCheckpoint(filename='{epoch}-{valid_metric_nbg:.2f}-{train_metric_nbg:.2f}-{valid_metric_bg:.2f}-{train_metric_bg:.2f}',
                                                        monitor=args.monitor,
