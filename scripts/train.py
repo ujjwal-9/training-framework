@@ -43,11 +43,11 @@ print("Training parameters:\n", args)
 
 #dist.init_process_group(backend='gloo', rank=args.rank, world_size=len(args.gpu.split(",")))
 pl.seed_everything(args.seed, workers=True)
-dm = InfarctDataModule(args)
+dm = args.dataset_module(args)
 
 args.num_classes = dm.num_classes
 
-model =  qSegmentation(args)
+model =  args.trainer(args)
 if args.mode == "multiclass":
     checkpoint_callback = pl.callbacks.ModelCheckpoint(filename='{epoch}-{valid_metric_nbg:.2f}-{train_metric_nbg:.2f}-{valid_metric_bg:.2f}-{train_metric_bg:.2f}',
                                                        monitor=args.monitor,
@@ -65,8 +65,23 @@ tb_logger = pl_loggers.TensorBoardLogger(save_dir=log_dir)
 # csv_logger = pl_loggers.CSVLogger(save_dir="logs/")
 
 lr_monitor = LearningRateMonitor(logging_interval='step')
-early_stopping = EarlyStopping(monitor="valid_loss", patience=10)
+early_stopping = EarlyStopping(monitor="valid_loss", patience=args.patience)
 
+import os
+from glob import glob
+log_dirs = glob(os.path.join(log_dir, "lightning_logs", "*"))
+ver = None
+if len(log_dirs) == 0:
+    ver = 0
+else:
+    for dir_ in log_dirs:
+        ver_ = dir_.split("_")[-1]
+        if ver is None:
+            ver = int(ver_)
+        else:
+            if ver < int(ver_):
+                ver = int(ver_)
+print(f"LOG FOLDER: VERSION_{ver}")
 
 trainer = pl.Trainer(accelerator='gpu',
                      devices=args.gpu, 
