@@ -18,7 +18,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from qtrain.dataset.infarct import InfarctDataModule
 from qtrain.models.train_models import qSegmentation
 
-# from clearml import Task
+from clearml import Task
 
 
 parser = argparse.ArgumentParser()
@@ -37,7 +37,7 @@ with open(init_args.config) as f:
 args = munch.munchify(args)
 args.experiment = init_args.exp
 
-# task = Task.init(project_name="Infarcts", task_name=args.experiment)
+task = Task.init(project_name="Infarcts Segmentation", task_name=args.experiment)
 
 print("Training parameters:\n", args)
 
@@ -47,7 +47,7 @@ dm = args.dataset_module(args)
 
 args.num_classes = dm.num_classes
 
-model =  args.trainer(args)
+model =  qSegmentation(args)
 if args.mode == "multiclass":
     checkpoint_callback = pl.callbacks.ModelCheckpoint(filename='{epoch}-{valid_metric_nbg:.2f}-{train_metric_nbg:.2f}-{valid_metric_bg:.2f}-{train_metric_bg:.2f}',
                                                        monitor=args.monitor,
@@ -65,7 +65,7 @@ tb_logger = pl_loggers.TensorBoardLogger(save_dir=log_dir)
 # csv_logger = pl_loggers.CSVLogger(save_dir="logs/")
 
 lr_monitor = LearningRateMonitor(logging_interval='step')
-early_stopping = EarlyStopping(monitor="valid_loss", patience=args.patience)
+early_stopping = EarlyStopping(monitor="valid/loss", patience=args.patience)
 
 import os
 from glob import glob
