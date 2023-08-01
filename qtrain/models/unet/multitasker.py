@@ -8,6 +8,7 @@ from segmentation_models_pytorch.base import initialization as init
 from segmentation_models_pytorch.base import ClassificationHead
 from torchvision.ops import SqueezeExcitation
 from qtrain.utils.pooling import lse_pooling
+from collections import defaultdict
 
 
 class MultiTaskSeqAttn(nn.Module):
@@ -48,17 +49,17 @@ class MultiTaskSeqAttn(nn.Module):
 
         self.acute_chronic_classification_head = ClassificationHead(
             in_channels=self.encoder.out_channels[-1],
-            classes=self.args.cls_nclasses,
-            pooling=self.args.cls_pooling,
-            dropout=self.args.cls_dropout,
+            classes=self.args.cls_ac_nclasses,
+            pooling=self.args.cls_ac_pooling,
+            dropout=self.args.cls_ac_dropout,
             activation=None,
         )
 
         self.normal_classification_head = ClassificationHead(
             in_channels=self.encoder.out_channels[-1],
-            classes=self.args.cls_nclasses,
-            pooling=self.args.cls_pooling,
-            dropout=self.args.cls_dropout,
+            classes=self.args.cls_normal_nclasses,
+            pooling=self.args.cls_normal_pooling,
+            dropout=self.args.cls_normal_dropout,
             activation=None,
         )
 
@@ -77,14 +78,13 @@ class MultiTaskSeqAttn(nn.Module):
     def initialize(self):
         init.initialize_decoder(self.decoder)
         init.initialize_head(self.segmentation_head)
-        init.initialize_head(self.classification_head)
+        init.initialize_head(self.slc_classification_head)
+        init.initialize_head(self.acute_chronic_classification_head)
+        init.initialize_head(self.normal_classification_head)
 
     def forward(self, ct):
         """Sequentially pass `x` trough model`s encoder, decoder and heads"""
-        output = {
-            "masks": [],
-            "slc_logits": []
-        }
+        output = defaultdict(list)
         batch_size = ct.size(0)
         # z_size = ct.size(1)
         for bsz in range(batch_size):
@@ -96,7 +96,7 @@ class MultiTaskSeqAttn(nn.Module):
             
             decoder_output = self.decoder(*features)
             masks = self.segmentation_head(decoder_output)
-            slc_logits = self.classification_head(features[-1])
+            slc_logits = self.slc_classification_head(features[-1])
             acute_chronic_logits = self.acute_chronic_classification_head(features[-1])
             normal_logits = self.normal_classification_head(features[-1])
             
@@ -107,6 +107,6 @@ class MultiTaskSeqAttn(nn.Module):
 
         output["masks"] = torch.stack(output["masks"])
         output["slc_logits"] = torch.stack(output["slc_logits"])
-        output["acute_chronic_logits"] = lse_pooling(output["acute_chronic_logits"].permute(0,2,1))
-        output["normal_logits"] = lse_pooling(output["normal_logits"].permute(0,2,1))
+        output["acute_chronic_logits"] = lse_pooling(torch.stack(output["acute_chronic_logits"]).permute(0,2,1))
+        output["normal_logits"] = lse_pooling(torch.stack(output["normal_logits"]).permute(0,2,1))
         return output

@@ -39,7 +39,7 @@ class UnetSeqAttn(nn.Module):
             
         self.classification_head = ClassificationHead(
             in_channels=self.encoder.out_channels[-1],
-            classes=2,
+            classes=1,
             pooling=self.args.cls_pooling,
             dropout=self.args.cls_dropout,
             activation=None,

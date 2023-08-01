@@ -16,7 +16,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 from qtrain.dataset.infarct import InfarctDataModule
-from qtrain.models.train_models import qSegAndClass
+from qtrain.models.train_models import qMultiTasker
 
 from clearml import Task
 
@@ -48,8 +48,12 @@ print("Training parameters:\n", args)
 #dist.init_process_group(backend='gloo', rank=args.rank, world_size=len(args.gpu.split(",")))
 pl.seed_everything(args.seed, workers=True)
 dm = InfarctDataModule(args)
+args.training_samples = dm.get_num_training_samples()
 
-model =  qSegAndClass(args)
+if "total_steps" in args.scheduler_params:
+    args.scheduler_params.total_steps = args.training_samples // args.batch_size * args.max_epoch
+
+model =  qMultiTasker(args)
 if args.mode == "multiclass":
     checkpoint_callback_valid_loss = pl.callbacks.ModelCheckpoint(filename='{epoch}-{valid_metric_nbg:.2f}-{train_metric_nbg:.2f}-{valid_metric_bg:.2f}-{train_metric_bg:.2f}',
                                                        monitor=args.monitor,
@@ -82,6 +86,7 @@ metrics_to_monitor = [
     {"monitor": "valid_cls_ce", "mode": 'min', "filename": "valid_cls_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_ce:.2f}"},
     {"monitor": "valid_slc_bce", "mode": 'min', "filename": "valid_slc_bce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_slc_bce:2f}"},
     {"monitor": "valid_seg_focal", "mode": 'min', "filename": "valid_seg_focal_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_seg_focal:.2f}"},
+    {"monitor": "valid_seg_bce", "mode": 'min', "filename": "valid_seg_bce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_seg_bce:.2f}"},
     {"monitor": "valid_cls_sensitivity", "mode": 'max', "filename": "valid_cls_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_sensitivity:2f}"},
     {"monitor": "valid_cls_specificity", "mode": 'max', "filename": "valid_cls_specificity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_specificity:.2f}"},
     {"monitor": "valid_cls_youden", "mode": 'max', "filename": "valid_cls_youden_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_youden:.2f}"},
@@ -128,7 +133,7 @@ else:
                 ver = int(ver_)
 print(f"LOG FOLDER: VERSION_{ver}")
 
-trainer = pl.Trainer(accelerator='gpu',
+trainer = pl.Trainer(accelerator="auto",
                      devices=args.gpu, 
                      precision=args.precision,
                      max_epochs=args.max_epoch, 
@@ -136,11 +141,15 @@ trainer = pl.Trainer(accelerator='gpu',
                      callbacks=callbacks_to_minitor,
                      logger=[tb_logger],
                      num_sanity_val_steps=0,
+                     sync_batchnorm=True,
                      fast_dev_run=args.fast_dev_run,
                      strategy=args.strategy,
-                     accumulate_grad_batches=args.accumulate_grad_batches
+                     accumulate_grad_batches=args.accumulate_grad_batches,
+                     gradient_clip_val=args.gradient_clip_val,
+                     gradient_clip_algorithm = args.gradient_clip_algorithm,
+                     auto_select_gpus=True,
+                     detect_anomaly=True,
                     )
 
 if __name__ == "__main__":
     trainer.fit(model, dm, ckpt_path=init_args.resume)
-

@@ -18,6 +18,7 @@ import segmentation_models_pytorch as smp
 from sklearn import metrics
 from collections import defaultdict
 from qtrain.models.unet.unet2dseqattn import UnetSeqAttn
+from qtrain.models.unet.multitasker import MultiTaskSeqAttn
 from torchmetrics.classification import JaccardIndex, AUROC
 
 import torch
@@ -25,6 +26,218 @@ import torchmetrics as tm
 import torch.nn.functional as F
 
 
+
+class qMultiTasker(pl.LightningModule):
+    def __init__(self, args):
+        super().__init__()
+        self.save_hyperparameters()
+        self.args = args
+        
+        if "mode" not in self.args.keys():
+            warnings.warn(" `mode` not in arguments file, setting it to `multilabel` ")
+            self.args["mode"] = "multilabel"
+
+        self.setup_model()
+        self.nan_score = 0.0
+
+        self.seg_focal_loss = smp.losses.FocalLoss(mode="multiclass", ignore_index=-100)
+        self.seg_miou_metric = JaccardIndex(task="binary", num_classes=2, ignore_index=-100)
+        self.seg_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=-100)
+        
+        self.cls_ce_loss = nn.CrossEntropyLoss()
+        self.cls_auc_metric = AUROC(task="binary", num_classes=2, ignore_index=-100)
+        self.cls_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=-100)
+        self.cls_sens_spec_metric = tm.StatScores(task="binary", num_classes=2, ignore_index=-100)
+
+        self.slc_bce_loss = nn.BCEWithLogitsLoss(size_average=True)
+        self.slc_auc_metric = AUROC(task="multiclass", num_classes=2, ignore_index=-100)
+        self.slc_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=-100)
+        self.slc_sens_spec_metric = tm.StatScores(task="multiclass", num_classes=2, ignore_index=-100)
+        
+    def setup_model(self):
+        self.model = MultiTaskSeqAttn(self.args.model_params)
+
+    def forward(self, z):
+        z = self.model(z)
+        return z
+    
+    def seg_loss_criterion(self, pred, gt):  
+        seg_losses = {"focal": self.seg_focal_loss,
+                      "bce": F.binary_cross_entropy_with_logits}
+
+        total_loss = 0.0
+        loss_dict = {}
+        for key in self.args.seg_loss_wts:
+            loss_dict[key] = self.args.seg_loss_wts[key] * seg_losses[key](pred.view(-1, *pred.size()[2:]), gt.view(-1, *gt.shape[2:]))
+            if torch.isnan(loss_dict[key]):
+                loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
+            total_loss += loss_dict[key]
+
+        gt = gt.clone()
+        gt[gt.sum(axis=(2,3))<=0] = -100
+        seg_metric = {"miou": self.seg_miou_metric(F.softmax(pred).argmax(2).detach(), gt),
+                    #   "avg_precision": self.seg_ap_metric(pred_[:,:,0].detach(), gt),
+                      }
+        
+        # indices = torch.where(trg_cls>0)[0]
+        # pred_ = torch.index_select(pred, 0, indices)[:,:,0]
+        # gt_ = torch.index_select(gt, 0, indices)
+        
+        # if torch.numel(pred_) == 0:
+        #     return loss_dict, total_loss, {"miou": None}
+        
+        # metric = {"miou": self.metric((pred_>0.5).to(torch.int), gt_)}
+        # return loss_dict, total_loss, metric
+        # print("focal: ", total_loss)
+        return loss_dict, total_loss, seg_metric
+
+    def cls_loss_criterion(self, pred, gt):
+        cls_losses = {"ce": self.cls_ce_loss}
+        total_loss = 0.0
+        loss_dict = {}
+        for key in self.args.cls_loss_wts:
+            loss_dict[key] = self.args.cls_loss_wts[key] * cls_losses[key](pred, gt[:,0].to(torch.long))
+            if torch.isnan(loss_dict[key]):
+                loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
+            total_loss += loss_dict[key]
+        tp, fp, tn, fn, sup = self.cls_sens_spec_metric(pred.detach().argmax(1), gt[:,0].detach().to(torch.long))
+        cls_metric = {"auc": self.cls_auc_metric(pred.detach().argmax(1), gt[:,0].detach().to(torch.long)), 
+                    #   "avg_precision": self.cls_ap_metric(pred.detach()[:,1], gt.detach()),
+                      "sensitivity": tp/(tp+fn),
+                      "specificity": tn/(tn+fp),
+                      "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
+                      }
+        
+        # print("ce: ", total_loss)
+        return loss_dict, total_loss, cls_metric
+        
+    def slc_loss_criterion(self, pred, gt):
+        slc_losses = {"bce": self.slc_bce_loss}
+        target_score = gt.sum(axis=(2,3))
+        
+        trg_index = torch.where((gt.sum(axis=(2,3))>=0).sum(axis=1)==0)[0].tolist()
+        for idx in trg_index:
+            target_score[idx] = torch.ones_like(target_score[idx])*-100
+        
+        target_score[target_score>=1] = 1
+        target_score[target_score==0] = 0
+        target_score[target_score<0] = -100
+
+        total_loss = 0.0
+        loss_dict = {}
+        for key in self.args.slc_loss_wts:
+            loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred[:,:,1][target_score>=0].double(), target_score[target_score>=0].double())
+            if torch.isnan(loss_dict[key]):
+                loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
+            total_loss += loss_dict[key]
+
+        tp, fp, tn, fn, sup = self.slc_sens_spec_metric(F.softmax(pred).detach().permute(0,2,1), target_score.detach())   
+        slc_metric = {
+                    # "auc": self.slc_auc_metric(pred_.detach().permute(0,2,1), target_score.detach()), 
+                    # "avg_precision": self.slc_ap_metric(pred_.detach().permute(0,2,1), target_score.detach()),
+                    "sensitivity": tp/(tp+fn),
+                    "specificity": tn/(tn+fp),
+                    "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
+                    }
+        
+        # print("bce: ", total_loss)
+        return loss_dict, total_loss, slc_metric
+
+    def loss_criterion(self, pred, gt, trg_cls, infarct_cls, prefix="train"):
+        torch.nan_to_num_(gt)
+        torch.nan_to_num_(trg_cls)
+        normal_loss_dict, normal_loss, normal_metric = self.cls_loss_criterion(pred["normal_logits"], trg_cls)
+        slc_loss_dict, slc_loss, slc_metric = self.slc_loss_criterion(pred["slc_logits"], gt)
+        infarct_type_loss_dict, infarct_type_loss, infarct_type_metric = self.slc_loss_criterion(pred["acute_chronic_logits"], infarct_cls)
+        seg_loss_dict, seg_loss, seg_metric = self.seg_loss_criterion(pred["masks"], gt)
+        
+        losses_ = [slc_loss, normal_loss, infarct_type_loss]
+        loss = seg_loss
+        for loss_ in losses_:
+            if loss_ is not None:
+                loss += loss_
+        losses = {
+            "seg": seg_loss_dict,
+            "slc": slc_loss_dict,
+            "normal": infarct_type_loss_dict,
+            "infarct": normal_loss_dict
+        }
+
+        metrics = {
+            "seg": seg_metric,
+            "slc": slc_metric,
+            "normal": normal_metric,
+            "infarct": infarct_type_metric
+        }
+        
+        log_losses = {}
+        log_metrics = {}
+        
+        for key in losses:
+            if losses[key] is None:
+                continue
+            else:
+                for l in losses[key]:
+                    log_losses[prefix+"_"+key+"_"+l] = losses[key][l]
+
+        for key in metrics:
+            if metrics[key] is None:
+                continue
+            else:
+                for l in metrics[key]:
+                    if torch.isnan(metrics[key][l]):
+                        metrics[key][l] = torch.tensor(self.nan_score, device=self.device)
+                    log_metrics[prefix+"_"+key+"_"+l] = metrics[key][l]
+        
+        return loss, log_losses, log_metrics
+    
+    def compute_batch(self, batch, batch_idx, prefix='train'):
+        ct, gt_segmentation_map, trg_cls, infarct_cls = batch
+        torch.nan_to_num_(ct)
+        output = self(ct)
+        loss, log_losses, log_metrics = self.loss_criterion(output, gt_segmentation_map, trg_cls, infarct_cls, prefix)
+        return loss, log_losses, log_metrics
+
+    def training_step(self, batch, batch_idx):
+        loss, log_losses, log_metrics = self.compute_batch(batch, batch_idx)
+        self.log_dict(log_losses, on_step=False,
+                      on_epoch=True, batch_size=self.args.batch_size, 
+                      prog_bar=True,rank_zero_only=True)
+        self.log("train_loss", loss, on_step=False,
+                      on_epoch=True, batch_size=self.args.batch_size, 
+                      prog_bar=True,rank_zero_only=True)
+        self.log_dict(log_metrics, on_step=False,
+                      on_epoch=True, batch_size=self.args.batch_size, 
+                      prog_bar=True,rank_zero_only=True)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        loss, log_losses, log_metrics = self.compute_batch(batch, batch_idx, prefix="valid")
+        self.log_dict(log_losses, on_step=False,
+                      on_epoch=True, batch_size=self.args.batch_size, 
+                      prog_bar=True,rank_zero_only=True)
+        self.log("valid_loss", loss, on_step=False,
+                      on_epoch=True, batch_size=self.args.batch_size, 
+                      prog_bar=True,rank_zero_only=True)
+        self.log_dict(log_metrics, on_step=False,
+                      on_epoch=True, batch_size=self.args.batch_size, 
+                      prog_bar=True,rank_zero_only=True)
+        return loss
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        ct, gt_segmentation_map, trg_cls = batch
+        y_hat = self.model(ct)
+        return y_hat
+
+    def configure_optimizers(self):
+        optimizer = self.args.optimizer(self.model.parameters(), **self.args.optimizer_params)
+        scheduler = self.args.scheduler(optimizer, **self.args.scheduler_params)
+        if 'ReduceLROnPlateau' in str(scheduler):
+            return [optimizer], [{'scheduler': scheduler, 'monitor': 'valid/loss'}]
+        if 'CyclicLR' in str(scheduler):
+            scheduler.state_dict().pop("_scale_fn_ref")
+            
+        return [optimizer], [scheduler]
 
 
 class qSegAndClass(pl.LightningModule):
@@ -63,7 +276,8 @@ class qSegAndClass(pl.LightningModule):
         return z
     
     def seg_loss_criterion(self, pred, gt):  
-        seg_losses = {"focal": self.seg_focal_loss}
+        seg_losses = {"focal": self.seg_focal_loss,
+                      "bce": F.binary_cross_entropy_with_logits}
 
         total_loss = 0.0
         loss_dict = {}
@@ -89,7 +303,7 @@ class qSegAndClass(pl.LightningModule):
         
         # metric = {"miou": self.metric((pred_>0.5).to(torch.int), gt_)}
         # return loss_dict, total_loss, metric
-        print("focal: ", total_loss)
+        # print("focal: ", total_loss)
         return loss_dict, total_loss, seg_metric
 
     def cls_loss_criterion(self, pred, gt):
@@ -97,20 +311,19 @@ class qSegAndClass(pl.LightningModule):
         total_loss = 0.0
         loss_dict = {}
         for key in self.args.cls_loss_wts:
-            loss_dict[key] = self.args.cls_loss_wts[key] * cls_losses[key](pred, gt)
+            loss_dict[key] = self.args.cls_loss_wts[key] * cls_losses[key](pred, gt[:,0].to(torch.long))
             if torch.isnan(loss_dict[key]):
                 loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
             total_loss += loss_dict[key]
-        
-        tp, fp, tn, fn, sup = self.cls_sens_spec_metric(pred.detach().argmax(1), gt.detach())
-        cls_metric = {"auc": self.cls_auc_metric(pred.detach().argmax(1), gt.detach()), 
+        tp, fp, tn, fn, sup = self.cls_sens_spec_metric(pred.detach().argmax(1), gt[:,0].detach().to(torch.long))
+        cls_metric = {"auc": self.cls_auc_metric(pred.detach().argmax(1), gt[:,0].detach().to(torch.long)), 
                     #   "avg_precision": self.cls_ap_metric(pred.detach()[:,1], gt.detach()),
                       "sensitivity": tp/(tp+fn),
                       "specificity": tn/(tn+fp),
                       "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
                       }
         
-        print("ce: ", total_loss)
+        # print("ce: ", total_loss)
         return loss_dict, total_loss, cls_metric
 
     # def slc_loss_criterion(self, pred, gt, trg_cls):
@@ -163,7 +376,7 @@ class qSegAndClass(pl.LightningModule):
                     "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
                     }
         
-        print("bce: ", total_loss)
+        # print("bce: ", total_loss)
         return loss_dict, total_loss, slc_metric
 
     def loss_criterion(self, pred, gt, trg_cls, prefix="train"):
