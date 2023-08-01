@@ -38,22 +38,23 @@ class qMultiTasker(pl.LightningModule):
             self.args["mode"] = "multilabel"
 
         self.setup_model()
-        self.nan_score = 0.1
+        self.nan_score = 0.0
+        self.ignore_index = self.args.ignore_index
 
-        self.seg_focal_loss = smp.losses.FocalLoss(mode="multiclass", ignore_index=-100)
-        self.seg_miou_metric = JaccardIndex(task="binary", num_classes=2, ignore_index=-100)
-        self.seg_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=-100)
+        self.seg_focal_loss = smp.losses.FocalLoss(mode="multiclass", ignore_index=self.ignore_index, reduction='none')
+        self.seg_miou_metric = JaccardIndex(task="binary", num_classes=2, ignore_index=self.ignore_index)
+        self.seg_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=self.ignore_index)
         
-        self.cls_ce_loss = nn.CrossEntropyLoss(weight=torch.FloatTensor([2.,1.]), ignore_index=-100)
-        self.cls_auc_metric = AUROC(task="binary", num_classes=2, ignore_index=-100)
-        self.cls_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=-100)
-        self.cls_sens_spec_metric = tm.StatScores(task="binary", num_classes=2, ignore_index=-100)
+        self.cls_ce_loss = nn.CrossEntropyLoss(weight=torch.FloatTensor([2.,1.]), ignore_index=self.ignore_index)
+        self.cls_auc_metric = AUROC(task="binary", num_classes=2, ignore_index=self.ignore_index)
+        self.cls_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=self.ignore_index)
+        self.cls_sens_spec_metric = tm.StatScores(task="binary", num_classes=2, ignore_index=self.ignore_index)
 
         self.slc_bce_loss = nn.BCEWithLogitsLoss(reduction='none')
-        self.slc_auc_metric = AUROC(task="multiclass", num_classes=2, ignore_index=-100)
-        self.slc_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=-100)
-        self.slc_sens_spec_metric = tm.StatScores(task="multiclass", num_classes=2, ignore_index=-100)
-        self.infarct_sens_spec_metric = tm.StatScores(task="multilabel", num_labels=2, ignore_index=-100)
+        self.slc_auc_metric = AUROC(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
+        self.slc_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
+        self.slc_sens_spec_metric = tm.StatScores(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
+        self.infarct_sens_spec_metric = tm.StatScores(task="multilabel", num_labels=2, ignore_index=self.ignore_index)
         
     def setup_model(self):
         self.model = MultiTaskSeqAttn(self.args.model_params)
@@ -68,14 +69,19 @@ class qMultiTasker(pl.LightningModule):
         total_loss = 0.0
         loss_dict = {}
         for key in self.args.seg_loss_wts:
-            loss_dict[key] = self.args.seg_loss_wts[key] * seg_losses[key](pred.view(-1, *pred.size()[2:]), gt.view(-1, *gt.shape[2:]))
+            if torch.all(gt == self.ignore_index):
+                loss_dict[key] = self.args.seg_loss_wts[key] * seg_losses[key](pred.view(-1, *pred.size()[2:]), torch.ones_like(gt.view(-1, *gt.shape[2:])))
+                loss_dict[key] = torch.mean(loss_dict[key] * (gt.flatten()>=0))
+            else:    
+                loss_dict[key] = self.args.seg_loss_wts[key] * seg_losses[key](pred.view(-1, *pred.size()[2:]), gt.view(-1, *gt.shape[2:]))
+                loss_dict[key] = torch.mean(loss_dict[key])
             # if torch.isnan(loss_dict[key]):
             #     # loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
             #     loss_dict[key][torch.isnan(loss_dict[key])] = self.nan_score
             total_loss += loss_dict[key]
 
         gt = gt.clone()
-        gt[gt.sum(axis=(2,3))<=0] = -100
+        gt[gt.sum(axis=(2,3))<=0] = self.ignore_index
         seg_metric = {"miou": self.seg_miou_metric(F.softmax(pred).argmax(2).detach(), gt),
                     #   "avg_precision": self.seg_ap_metric(pred_[:,:,0].detach(), gt),
                       }
@@ -89,7 +95,7 @@ class qMultiTasker(pl.LightningModule):
         
         # metric = {"miou": self.metric((pred_>0.5).to(torch.int), gt_)}
         # return loss_dict, total_loss, metric
-        # print("focal: ", total_loss)
+        # print("seg: ", total_loss)
         return loss_dict, total_loss, seg_metric
 
     def cls_loss_criterion(self, pred, gt, series):
@@ -110,7 +116,7 @@ class qMultiTasker(pl.LightningModule):
                       "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
                       }
         
-        # print("ce: ", total_loss)
+        # print("cls: ", total_loss)
         return loss_dict, total_loss, cls_metric
         
     def slc_loss_criterion(self, pred, gt, series):
@@ -129,8 +135,8 @@ class qMultiTasker(pl.LightningModule):
         loss_dict = {}
         for key in self.args.slc_loss_wts:
             # loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred[:,:,1][target_score>=0].double(), target_score[target_score>=0].double())
-            loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred[:,:,1].double(), target_score.double())
-            loss_dict[key] = (target_score>=0)*loss_dict[key]
+            loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred[:,:,1].double(), target_score.double()) * (target_score>=0)
+            loss_dict[key] = torch.mean(loss_dict[key])
             # if torch.isnan(loss_dict[key]):
             #     # loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
             #     loss_dict[key][torch.isnan(loss_dict[key])] = self.nan_score
@@ -145,7 +151,7 @@ class qMultiTasker(pl.LightningModule):
                     "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
                     }
         
-        # print("bce: ", total_loss)
+        # print("slc: ", total_loss)
         return loss_dict, total_loss, slc_metric
     
     def infarct_loss_criterion(self, pred, target_score, series):
@@ -154,9 +160,8 @@ class qMultiTasker(pl.LightningModule):
         total_loss = 0.0
         loss_dict = {}
         for key in self.args.slc_loss_wts:
-            loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred.double(), target_score.double())
-            if key == "bce":
-                loss_dict[key] = (target_score>=0)*loss_dict[key]
+            loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred.double(), target_score.double())*(target_score>=0)
+            loss_dict[key] = torch.mean(loss_dict[key])
             # if torch.isnan(loss_dict[key]):
             #     # loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
             #     loss_dict[key][torch.isnan(loss_dict[key])] = self.nan_score
@@ -171,7 +176,7 @@ class qMultiTasker(pl.LightningModule):
                     "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
                     }
         
-        # print("bce: ", total_loss)
+        # print("infarct: ", total_loss)
         return loss_dict, total_loss, slc_metric
 
     def loss_criterion(self, series, pred, gt, trg_cls, infarct_cls, prefix="train"):
@@ -185,7 +190,9 @@ class qMultiTasker(pl.LightningModule):
         losses_ = [slc_loss, normal_loss, infarct_type_loss]
         loss = seg_loss
         for loss_ in losses_:
-            if loss_ is not None:
+            if torch.isnan(loss_).any():
+                continue
+            else:
                 loss += loss_
         losses = {
             "seg": seg_loss_dict,
