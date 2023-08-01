@@ -86,7 +86,6 @@ metrics_to_monitor = [
     {"monitor": "valid_cls_ce", "mode": 'min', "filename": "valid_cls_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_ce:.2f}"},
     {"monitor": "valid_slc_bce", "mode": 'min', "filename": "valid_slc_bce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_slc_bce:2f}"},
     {"monitor": "valid_seg_focal", "mode": 'min', "filename": "valid_seg_focal_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_seg_focal:.2f}"},
-    {"monitor": "valid_seg_bce", "mode": 'min', "filename": "valid_seg_bce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_seg_bce:.2f}"},
     {"monitor": "valid_cls_sensitivity", "mode": 'max', "filename": "valid_cls_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_sensitivity:2f}"},
     {"monitor": "valid_cls_specificity", "mode": 'max', "filename": "valid_cls_specificity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_specificity:.2f}"},
     {"monitor": "valid_cls_youden", "mode": 'max', "filename": "valid_cls_youden_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_youden:.2f}"},

@@ -54,6 +54,8 @@ class MultiTaskSeqAttn(nn.Module):
             dropout=self.args.cls_ac_dropout,
             activation=None,
         )
+        
+        self.acute_chronic_fc = nn.Linear(self.args.n_slices, 1)
 
         self.normal_classification_head = ClassificationHead(
             in_channels=self.encoder.out_channels[-1],
@@ -62,14 +64,6 @@ class MultiTaskSeqAttn(nn.Module):
             dropout=self.args.cls_normal_dropout,
             activation=None,
         )
-
-        # self.classification_head = ClassificationHead(
-        #     in_channels=self.encoder.out_channels[-1],
-        #     classes=self.args.cls_nclasses,
-        #     pooling=self.args.cls_pooling,
-        #     dropout=self.args.cls_dropout,
-        #     activation=None,
-        # )
 
         self.se_blocks = nn.ModuleList([SqueezeExcitation(self.args.n_slices, 5) for i in range(self.args.depth)])
 
@@ -81,6 +75,7 @@ class MultiTaskSeqAttn(nn.Module):
         init.initialize_head(self.slc_classification_head)
         init.initialize_head(self.acute_chronic_classification_head)
         init.initialize_head(self.normal_classification_head)
+        init.initialize_head(self.acute_chronic_fc)
 
     def forward(self, ct):
         """Sequentially pass `x` trough model`s encoder, decoder and heads"""
@@ -107,6 +102,6 @@ class MultiTaskSeqAttn(nn.Module):
 
         output["masks"] = torch.stack(output["masks"])
         output["slc_logits"] = torch.stack(output["slc_logits"])
-        output["acute_chronic_logits"] = lse_pooling(torch.stack(output["acute_chronic_logits"]).permute(0,2,1))
+        output["acute_chronic_logits"] = self.acute_chronic_fc(torch.stack(output["acute_chronic_logits"]).permute(0,2,1))[:,:,0]
         output["normal_logits"] = lse_pooling(torch.stack(output["normal_logits"]).permute(0,2,1))
         return output

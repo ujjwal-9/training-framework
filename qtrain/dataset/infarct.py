@@ -724,6 +724,8 @@ class InfarctDataset3D_60k(Dataset):
     
     def get_foreground_crop(self, sitk_arr, annot_arr, index):
         crops = self.crops[index]
+        if crops.shape[0] == 3:
+            crops = crops[1:]
         cropped_sitk_arr = sitk_arr[:,crops[0,0]:crops[0,1], crops[1,0]:crops[1,1]]
         cropped_annot_arr = annot_arr[:, crops[0,0]:crops[0,1], crops[1,0]:crops[1,1]]
         return cropped_sitk_arr, cropped_annot_arr
@@ -756,7 +758,7 @@ class InfarctDataset3D_60k(Dataset):
         if self.args.crop:
             ct_scan, annotation = self.get_foreground_crop(ct_scan, annotation, index)
         
-        ct_scan, annotation = torch.tensor(ct_scan).to(torch.int16), torch.tensor(annotation).to(torch.int16)
+        ct_scan, annotation = torch.tensor(ct_scan), torch.tensor(annotation).to(torch.int16)
         
         if self.args.n_slices > 0:
             if ct_scan.shape[0] < self.args.n_slices:
@@ -816,14 +818,14 @@ class InfarctDataset3D_60k(Dataset):
     def __getitem__(self, index):
         try:
             ct_scan, annotation, label_class, infarct_type = self.process(index)
-            return *self.excute_augmentations(ct_scan, annotation), torch.Tensor(label_class).to(torch.int16), torch.Tensor(infarct_type).to(torch.int16)
+            return *self.excute_augmentations(ct_scan, annotation), torch.Tensor(label_class).to(torch.int16), torch.Tensor(infarct_type).to(torch.int16), self.series[index]
         except:
             ct_scan = torch.zeros((self.args.n_slices, 3, self.args.img_size, self.args.img_size))
             annotation = torch.ones((self.args.n_slices, self.args.img_size, self.args.img_size))*-100
             label_class = [1]
             infarct_type = [-100, -100]
             logger.debug(f'Issue with this file {self.datapath[index].split("/")[-1]}')
-            return ct_scan, annotation, torch.Tensor(label_class).to(torch.int16), torch.Tensor(infarct_type).to(torch.int16)
+            return ct_scan, annotation, torch.Tensor(label_class).to(torch.int16), torch.Tensor(infarct_type).to(torch.int16), self.series[index]
 
     def __len__(self):
         return len(self.datapath)
@@ -834,9 +836,9 @@ class InfarctDataset3D_60k(Dataset):
         if self.run_type == 'train' and self.args.augmentation:
             state = torch.get_rng_state()
             if random.random() < 0.7:
-                translate = [random.uniform(-10, 10), random.uniform(-10, 10)]
-                scale = random.uniform(0.8, 1.4)
-                angle = random.uniform(-45, 45)
+                translate = [random.uniform(-2, 2), random.uniform(-2, 2)]
+                scale = random.uniform(0.8, 1.2)
+                angle = random.uniform(-10, 10)
                 input_scan = TF.affine(input_scan, angle=angle, translate=translate, scale=scale, shear=0.0, interpolation=transforms.InterpolationMode.BILINEAR)
                 target = TF.affine(target, angle=angle, translate=translate, scale=scale, shear=0.0, interpolation=transforms.InterpolationMode.NEAREST)
             
@@ -850,11 +852,11 @@ class InfarctDataset3D_60k(Dataset):
             if random.random() < 0.4:
                 input_scan = transforms.ColorJitter(brightness=0.5, contrast=0.6, saturation=0.7, hue=0.3)(input_scan)
 
-    #         if random.random() < 0.6:
-    #             input_scan = transforms.RandomAdjustSharpness(sharpness_factor=0.6, p=1)(input_scan)
+            if random.random() < 0.6:
+                input_scan = transforms.RandomAdjustSharpness(sharpness_factor=0.6, p=1)(input_scan)
 
-    #         if random.random() < 0.1:
-    #             input_scan = transforms.RandomSolarize(threshold=0.85, p=1)(input_scan)
+            if random.random() < 0.1:
+                input_scan = transforms.RandomSolarize(threshold=0.85, p=1)(input_scan)
                  
         return input_scan, target
 
