@@ -23,6 +23,8 @@ from clearml import Task
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:21"
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 
 
 parser = argparse.ArgumentParser()
