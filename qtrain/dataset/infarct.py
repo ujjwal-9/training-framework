@@ -825,7 +825,7 @@ class InfarctDataset3D_60k(Dataset):
             label_class = [1]
             infarct_type = [-100, -100]
             logger.debug(f'Issue with this file {self.datapath[index].split("/")[-1]}')
-            return ct_scan, annotation, torch.Tensor(label_class).to(torch.int16), torch.Tensor(infarct_type).to(torch.int16), self.series[index]
+            return ct_scan.to(torch.float), annotation.to(torch.int16), torch.Tensor(label_class).to(torch.int16), torch.Tensor(infarct_type).to(torch.int16), self.series[index]
 
     def __len__(self):
         return len(self.datapath)

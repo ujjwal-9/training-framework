@@ -147,7 +147,7 @@ trainer = pl.Trainer(accelerator="auto",
                      gradient_clip_val=args.gradient_clip_val,
                      gradient_clip_algorithm = args.gradient_clip_algorithm,
                      auto_select_gpus=True,
-                     detect_anomaly=True,
+                     detect_anomaly=False,
                     )
 
 if __name__ == "__main__":

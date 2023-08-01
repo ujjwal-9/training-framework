@@ -69,7 +69,6 @@ class qMultiTasker(pl.LightningModule):
         loss_dict = {}
         for key in self.args.seg_loss_wts:
             loss_dict[key] = self.args.seg_loss_wts[key] * seg_losses[key](pred.view(-1, *pred.size()[2:]), gt.view(-1, *gt.shape[2:]))
-            print(key, self.device, series, torch.isnan(loss_dict[key]).sum())
             if torch.isnan(loss_dict[key]):
                 loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
             total_loss += loss_dict[key]
@@ -98,7 +97,6 @@ class qMultiTasker(pl.LightningModule):
         loss_dict = {}
         for key in self.args.cls_loss_wts:
             loss_dict[key] = self.args.cls_loss_wts[key] * cls_losses[key](pred, gt[:,0].to(torch.long))
-            print(key, self.device, series, torch.isnan(loss_dict[key]).sum())
             if torch.isnan(loss_dict[key]):
                 loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
             total_loss += loss_dict[key]
@@ -129,7 +127,6 @@ class qMultiTasker(pl.LightningModule):
         loss_dict = {}
         for key in self.args.slc_loss_wts:
             loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred[:,:,1][target_score>=0].double(), target_score[target_score>=0].double())
-            print(key, self.device, series, torch.isnan(loss_dict[key]).sum())
             if torch.isnan(loss_dict[key]):
                 loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
             total_loss += loss_dict[key]
@@ -153,7 +150,6 @@ class qMultiTasker(pl.LightningModule):
         loss_dict = {}
         for key in self.args.slc_loss_wts:
             loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred.double(), target_score.double())
-            print(key, self.device, series, torch.isnan(loss_dict[key]).sum())
             if torch.isnan(loss_dict[key]):
                 loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
             total_loss += loss_dict[key]
