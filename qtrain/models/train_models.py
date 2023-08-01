@@ -165,13 +165,8 @@ class qMultiTasker(pl.LightningModule):
         infarct_type_loss_dict, infarct_type_loss, infarct_type_metric = self.infarct_loss_criterion(pred["acute_chronic_logits"], infarct_cls, series)
         seg_loss_dict, seg_loss, seg_metric = self.seg_loss_criterion(pred["masks"], gt, series)
         
-        losses_ = [slc_loss, normal_loss, infarct_type_loss]
-        loss = seg_loss
-        for loss_ in losses_:
-            if torch.isnan(loss_).any():
-                continue
-            else:
-                loss += loss_
+        loss = seg_loss + slc_loss + normal_loss + infarct_type_loss
+        
         losses = {
             "seg": seg_loss_dict,
             "slc": slc_loss_dict,
