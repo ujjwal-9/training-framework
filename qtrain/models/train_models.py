@@ -75,9 +75,6 @@ class qMultiTasker(pl.LightningModule):
             else:    
                 loss_dict[key] = self.args.seg_loss_wts[key] * seg_losses[key](pred.view(-1, *pred.size()[2:]), gt.view(-1, *gt.shape[2:]))
                 loss_dict[key] = torch.mean(loss_dict[key])
-            # if torch.isnan(loss_dict[key]):
-            #     # loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
-            #     loss_dict[key][torch.isnan(loss_dict[key])] = self.nan_score
             total_loss += loss_dict[key]
 
         gt = gt.clone()
@@ -86,15 +83,6 @@ class qMultiTasker(pl.LightningModule):
                     #   "avg_precision": self.seg_ap_metric(pred_[:,:,0].detach(), gt),
                       }
         
-        # indices = torch.where(trg_cls>0)[0]
-        # pred_ = torch.index_select(pred, 0, indices)[:,:,0]
-        # gt_ = torch.index_select(gt, 0, indices)
-        
-        # if torch.numel(pred_) == 0:
-        #     return loss_dict, total_loss, {"miou": None}
-        
-        # metric = {"miou": self.metric((pred_>0.5).to(torch.int), gt_)}
-        # return loss_dict, total_loss, metric
         # print("seg: ", total_loss)
         return loss_dict, total_loss, seg_metric
 
@@ -104,9 +92,6 @@ class qMultiTasker(pl.LightningModule):
         loss_dict = {}
         for key in self.args.cls_loss_wts:
             loss_dict[key] = self.args.cls_loss_wts[key] * cls_losses[key](pred, gt[:,0].to(torch.long))
-            # if torch.isnan(loss_dict[key]):
-            #     # loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
-            #     loss_dict[key][torch.isnan(loss_dict[key])] = self.nan_score
             total_loss += loss_dict[key]
         tp, fp, tn, fn, sup = self.cls_sens_spec_metric(pred.detach().argmax(1), gt[:,0].detach().to(torch.long))
         cls_metric = {"auc": self.cls_auc_metric(pred.detach().argmax(1), gt[:,0].detach().to(torch.long)), 
@@ -134,12 +119,8 @@ class qMultiTasker(pl.LightningModule):
         total_loss = 0.0
         loss_dict = {}
         for key in self.args.slc_loss_wts:
-            # loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred[:,:,1][target_score>=0].double(), target_score[target_score>=0].double())
             loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred[:,:,1].double(), target_score.double()) * (target_score>=0)
             loss_dict[key] = torch.mean(loss_dict[key])
-            # if torch.isnan(loss_dict[key]):
-            #     # loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
-            #     loss_dict[key][torch.isnan(loss_dict[key])] = self.nan_score
             total_loss += loss_dict[key]
 
         tp, fp, tn, fn, sup = self.slc_sens_spec_metric(F.softmax(pred).detach().permute(0,2,1), target_score.detach())   
@@ -162,9 +143,6 @@ class qMultiTasker(pl.LightningModule):
         for key in self.args.slc_loss_wts:
             loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred.double(), target_score.double())*(target_score>=0)
             loss_dict[key] = torch.mean(loss_dict[key])
-            # if torch.isnan(loss_dict[key]):
-            #     # loss_dict[key] = torch.tensor(self.nan_score, device=self.device, requires_grad=True)
-            #     loss_dict[key][torch.isnan(loss_dict[key])] = self.nan_score
             total_loss += loss_dict[key]
 
         tp, fp, tn, fn, sup = self.infarct_sens_spec_metric(F.sigmoid(pred).detach(), target_score.detach())   

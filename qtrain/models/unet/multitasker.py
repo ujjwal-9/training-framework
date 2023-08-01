@@ -85,7 +85,6 @@ class MultiTaskSeqAttn(nn.Module):
         for bsz in range(batch_size):
             
             features = self.encoder(ct[bsz])
-            
             for i in range(1,len(features)):
                 features[i] = self.se_blocks[i-1](features[i].permute(1,0,2,3)).permute(1,0,2,3)
             
