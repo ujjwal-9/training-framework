@@ -83,13 +83,17 @@ else:
 metrics_to_monitor = [
     {"monitor": "valid_loss", "mode": 'min', "filename": "valid_loss_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_loss:.2f}"},
     {"monitor": "train_loss", "mode": 'min', "filename": "train_loss_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{train_loss:.2f}"},
-    {"monitor": "valid_cls_ce", "mode": 'min', "filename": "valid_cls_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_ce:.2f}"},
+    {"monitor": "valid_normal_ce", "mode": 'min', "filename": "valid_normal_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_ce:.2f}"},
+    {"monitor": "valid_infarct_ce", "mode": 'min', "filename": "valid_infarct_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_infarct_ce:.2f}"},
     {"monitor": "valid_slc_bce", "mode": 'min', "filename": "valid_slc_bce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_slc_bce:2f}"},
     {"monitor": "valid_seg_focal", "mode": 'min', "filename": "valid_seg_focal_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_seg_focal:.2f}"},
-    {"monitor": "valid_cls_sensitivity", "mode": 'max', "filename": "valid_cls_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_sensitivity:2f}"},
-    {"monitor": "valid_cls_specificity", "mode": 'max', "filename": "valid_cls_specificity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_specificity:.2f}"},
-    {"monitor": "valid_cls_youden", "mode": 'max', "filename": "valid_cls_youden_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_youden:.2f}"},
-    {"monitor": "valid_cls_auc", "mode": 'max', "filename": "valid_cls_auc_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_cls_auc:.2f}"},
+    {"monitor": "valid_infarct_sensitivity", "mode": 'max', "filename": "valid_infarct_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_infarct_sensitivity:2f}"},
+    {"monitor": "valid_infarct_specificity", "mode": 'max', "filename": "valid_infarct_specificity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_infarct_specificity:2f}"},
+    {"monitor": "valid_infarct_youden", "mode": 'max', "filename": "valid_infarct_youden_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_infarct_youden:2f}"},
+    {"monitor": "valid_normal_sensitivity", "mode": 'max', "filename": "valid_normal_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_sensitivity:2f}"},
+    {"monitor": "valid_normal_specificity", "mode": 'max', "filename": "valid_normal_specificity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_specificity:.2f}"},
+    {"monitor": "valid_normal_youden", "mode": 'max', "filename": "valid_normal_youden_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_youden:.2f}"},
+    {"monitor": "valid_normal_auc", "mode": 'max', "filename": "valid_normal_auc_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_auc:.2f}"},
     {"monitor": "valid_seg_miou", "mode": 'max', "filename": "valid_seg_miou_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_seg_miou:.2f}"},
     {"monitor": "valid_slc_sensitivity", "mode": 'max', "filename": "valid_slc_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_slc_sensitivity:.2f}"},
     {"monitor": "valid_slc_specificity", "mode": 'max', "filename": "valid_slc_specificity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_slc_specificity:.2f}"},
@@ -107,7 +111,7 @@ for metrics_ in metrics_to_monitor:
         )
 
 # checkpoint_callback.FILE_EXTENSION = ".pth"
-log_dir = osp.join(args.project_path, args.save_checkpoints)
+log_dir = args.save_checkpoints
 tb_logger = pl_loggers.TensorBoardLogger(save_dir=log_dir)
 # csv_logger = pl_loggers.CSVLogger(save_dir="logs/")
 
