@@ -85,8 +85,8 @@ else:
 metrics_to_monitor = [
     {"monitor": "valid_loss", "mode": 'min', "filename": "valid_loss_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_loss:.2f}"},
     {"monitor": "train_loss", "mode": 'min', "filename": "train_loss_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{train_loss:.2f}"},
-    {"monitor": "valid_normal_bce", "mode": 'min', "filename": "valid_normal_bce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_bce:.2f}"},
-    {"monitor": "valid_infarct_ce", "mode": 'min', "filename": "valid_infarct_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_infarct_ce:.2f}"},
+    {"monitor": "valid_normal_ce", "mode": 'min', "filename": "valid_normal_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_ce:.2f}"},
+    {"monitor": "valid_infarct_bce", "mode": 'min', "filename": "valid_infarct_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_infarct_bce:.2f}"},
     {"monitor": "valid_slc_bce", "mode": 'min', "filename": "valid_slc_bce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_slc_bce:2f}"},
     {"monitor": "valid_seg_focal", "mode": 'min', "filename": "valid_seg_focal_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_seg_focal:.2f}"},
     {"monitor": "valid_infarct_sensitivity", "mode": 'max', "filename": "valid_infarct_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_infarct_sensitivity:2f}"},
