@@ -38,6 +38,8 @@ class qMultiTasker(pl.LightningModule):
             self.args["mode"] = "multilabel"
 
         self.setup_model()
+        if "model" not in self.args:
+            self.args.model = "se_multitasker"
         self.nan_score = 0.0
         self.ignore_index = self.args.ignore_index
 
