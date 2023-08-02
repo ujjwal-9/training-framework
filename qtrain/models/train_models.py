@@ -57,7 +57,11 @@ class qMultiTasker(pl.LightningModule):
         self.infarct_sens_spec_metric = tm.StatScores(task="multilabel", num_labels=2, ignore_index=self.ignore_index)
         
     def setup_model(self):
-        self.model = MultiTaskSeqAttn(self.args.model_params)
+        if self.args.model == "multitask_qer":
+            from qtrain.models.qer_multitask.multitask import MultiTaskNet
+            self.model = MultiTaskNet(self.args.model_params)
+        else:
+            self.model = MultiTaskSeqAttn(self.args.model_params)
 
     def forward(self, z):
         z = self.model(z)
@@ -170,8 +174,8 @@ class qMultiTasker(pl.LightningModule):
         losses = {
             "seg": seg_loss_dict,
             "slc": slc_loss_dict,
-            "normal": infarct_type_loss_dict,
-            "infarct": normal_loss_dict
+            "normal": normal_loss_dict,
+            "infarct": infarct_type_loss_dict,
         }
 
         metrics = {
