@@ -1,0 +1,11 @@
+{
+    "status": "train",
+    "save_checkpoints": "logs",
+    "project_path": "/home/users/ujjwal.upadhyay/projects/qtrain/",
+    "mode": "binary",
+    "seed": 2023,
+    "background_index": 0,
+    "num_workers": 8,
+    "precision": 16,
+    "progress_bar_refresh_rate":20
+}

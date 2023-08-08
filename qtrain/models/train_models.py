@@ -1,30 +1,25 @@
 import warnings
+from collections import defaultdict
 
+import monai
+import monai.losses as L
+import monai.metrics as M
 import munch
 import numpy as np
 import pandas as pd
-
-import qtrain
-import monai
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import monai.losses as L
-import monai.metrics as M
-import torch.nn.functional as F
 import pytorch_lightning as pl
 import segmentation_models_pytorch as smp
-
-from sklearn import metrics
-from collections import defaultdict
-from qtrain.models.unet.unet2dseqattn import UnetSeqAttn
-from qtrain.models.unet.multitasker import MultiTaskSeqAttn
-from torchmetrics.classification import JaccardIndex, AUROC
-
 import torch
-import torchmetrics as tm
+import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
+import torchmetrics as tm
+from sklearn import metrics
+from torchmetrics.classification import AUROC, JaccardIndex
 
+import qtrain
+from qtrain.models.unet.multitasker import MultiTaskSeqAttn
+from qtrain.models.unet.unet2dseqattn import UnetSeqAttn
 
 
 class qMultiTasker(pl.LightningModule):
@@ -56,13 +51,19 @@ class qMultiTasker(pl.LightningModule):
         self.slc_auc_metric = AUROC(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
         self.slc_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
         self.slc_sens_spec_metric = tm.StatScores(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
+        
         self.infarct_sens_spec_metric = tm.StatScores(task="multilabel", num_labels=2, ignore_index=self.ignore_index)
+        self.infarct_auc_metric = AUROC(task="multilabel", num_labels=2, ignore_index=self.ignore_index)
         
     def setup_model(self):
-        if self.args.model == "multitask_qer":
-            from qtrain.models.qer_multitask.multitask import MultiTaskNet
-            self.model = MultiTaskNet(self.args.model_params)
-        else:
+        try:
+            if "model" in self.args:
+                if self.args.model == "multitask_qer":
+                    from qtrain.models.qer_multitask.multitask import MultiTaskNet
+                    self.model = MultiTaskNet(self.args.model_params)
+                else:
+                    self.model = MultiTaskSeqAttn(self.args.model_params)
+        except:
             self.model = MultiTaskSeqAttn(self.args.model_params)
 
     def forward(self, z):
@@ -131,7 +132,7 @@ class qMultiTasker(pl.LightningModule):
 
         tp, fp, tn, fn, sup = self.slc_sens_spec_metric(F.softmax(pred).detach().permute(0,2,1), target_score.detach())   
         slc_metric = {
-                    # "auc": self.slc_auc_metric(pred_.detach().permute(0,2,1), target_score.detach()), 
+                    # "auc": self.slc_auc_metric(F.softmax(pred).detach().permute(0,2,1), target_score.detach()), 
                     # "avg_precision": self.slc_ap_metric(pred_.detach().permute(0,2,1), target_score.detach()),
                     "sensitivity": tp/(tp+fn),
                     "specificity": tn/(tn+fp),
@@ -153,7 +154,7 @@ class qMultiTasker(pl.LightningModule):
 
         tp, fp, tn, fn, sup = self.infarct_sens_spec_metric(F.sigmoid(pred).detach(), target_score.detach())   
         slc_metric = {
-                    # "auc": self.slc_auc_metric(pred_.detach().permute(0,2,1), target_score.detach()), 
+                    # "auc": self.infarct_auc_metric(F.sigmoid(pred).detach(), target_score.detach()), 
                     # "avg_precision": self.slc_ap_metric(pred_.detach().permute(0,2,1), target_score.detach()),
                     "sensitivity": tp/(tp+fn),
                     "specificity": tn/(tn+fp),
@@ -166,24 +167,25 @@ class qMultiTasker(pl.LightningModule):
     def loss_criterion(self, series, pred, gt, trg_cls, infarct_cls, prefix="train"):
         torch.nan_to_num_(gt, nan=self.nan_score, posinf=self.nan_score, neginf=self.nan_score)
         torch.nan_to_num_(trg_cls, nan=self.nan_score, posinf=self.nan_score, neginf=self.nan_score)
-        normal_loss_dict, normal_loss, normal_metric = self.cls_loss_criterion(pred["normal_logits"], trg_cls, series)
+        # normal_loss_dict, normal_loss, normal_metric = self.cls_loss_criterion(pred["normal_logits"], trg_cls, series)
         slc_loss_dict, slc_loss, slc_metric = self.slc_loss_criterion(pred["slc_logits"], gt, series)        
         infarct_type_loss_dict, infarct_type_loss, infarct_type_metric = self.infarct_loss_criterion(pred["acute_chronic_logits"], infarct_cls, series)
         seg_loss_dict, seg_loss, seg_metric = self.seg_loss_criterion(pred["masks"], gt, series)
         
-        loss = seg_loss + slc_loss + normal_loss + infarct_type_loss
+        # loss = seg_loss + slc_loss + normal_loss + infarct_type_loss
+        loss = seg_loss + slc_loss + infarct_type_loss
         
         losses = {
             "seg": seg_loss_dict,
             "slc": slc_loss_dict,
-            "normal": normal_loss_dict,
+            # "normal": normal_loss_dict,
             "infarct": infarct_type_loss_dict,
         }
 
         metrics = {
             "seg": seg_metric,
             "slc": slc_metric,
-            "normal": normal_metric,
+            # "normal": normal_metric,
             "infarct": infarct_type_metric
         }
         
@@ -250,7 +252,7 @@ class qMultiTasker(pl.LightningModule):
         optimizer = self.args.optimizer(self.model.parameters(), **self.args.optimizer_params)
         scheduler = self.args.scheduler(optimizer, **self.args.scheduler_params)
         if 'ReduceLROnPlateau' in str(scheduler):
-            return [optimizer], [{'scheduler': scheduler, 'monitor': 'valid/loss'}]
+            return [optimizer], [{'scheduler': scheduler, 'monitor': 'valid_loss'}]
         if 'CyclicLR' in str(scheduler):
             scheduler.state_dict().pop("_scale_fn_ref")
             

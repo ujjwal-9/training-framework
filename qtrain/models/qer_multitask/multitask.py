@@ -35,7 +35,7 @@ class MultiTaskNet(torch.nn.Module):
         
         self.num_features += self.backbone.segmentation_head[0].in_channels
         self.multi_fc = qer_utils.nn.models.multilabel.MultiFC(self.num_features, self.args.cls_nclasses)
-        self.acute_chronic_multi_fc = qer_utils.nn.models.multilabel.MultiFC(self.num_features, self.args.cls_nclasses)
+        self.acute_chronic_multi_fc = qer_utils.nn.models.multilabel.MultiFC(self.num_features, self.args.cls_ac_nclasses)
         self.acute_chronic_fc = nn.Linear(self.args.n_slices, 1)
 
         self.normal_multi_fc = qer_utils.nn.models.multilabel.MultiFC(self.num_features, self.args.cls_nclasses)
