@@ -77,7 +77,7 @@ class MultiTaskSeqAttn(nn.Module):
         init.initialize_head(self.normal_classification_head)
         init.initialize_head(self.acute_chronic_fc)
 
-    def forward(self, ct):
+    def forward(self, ct, features=False):
         """Sequentially pass `x` trough model`s encoder, decoder and heads"""
         output = defaultdict(list)
         batch_size = ct.size(0)
@@ -98,6 +98,8 @@ class MultiTaskSeqAttn(nn.Module):
             output["slc_logits"].append(slc_logits)
             output["acute_chronic_logits"].append(acute_chronic_logits)
             output["normal_logits"].append(normal_logits)
+            if features:
+                output["features"].append(features)
 
         output["masks"] = torch.stack(output["masks"])
         output["slc_logits"] = torch.stack(output["slc_logits"])

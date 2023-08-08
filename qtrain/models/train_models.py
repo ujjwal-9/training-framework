@@ -52,7 +52,7 @@ class qMultiTasker(pl.LightningModule):
         self.slc_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
         self.slc_sens_spec_metric = tm.StatScores(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
         
-        self.infarct_sens_spec_metric = tm.StatScores(task="multilabel", num_labels=2, ignore_index=self.ignore_index)
+        self.infarct_sens_spec_metric = tm.StatScores(task="multilabel", num_labels=2, ignore_index=self.ignore_index, average='none')
         self.infarct_auc_metric = AUROC(task="multilabel", num_labels=2, ignore_index=self.ignore_index)
         
     def setup_model(self):
@@ -148,17 +148,22 @@ class qMultiTasker(pl.LightningModule):
         total_loss = 0.0
         loss_dict = {}
         for key in self.args.slc_loss_wts:
-            loss_dict[key] = self.args.slc_loss_wts[key] * slc_losses[key](pred.double(), target_score.double())*(target_score>=0)
+            loss_dict[key] = self.args.ac_loss_wts[key] * slc_losses[key](pred.double(), target_score.double())*(target_score>=0)
             loss_dict[key] = torch.mean(loss_dict[key])
             total_loss += loss_dict[key]
 
-        tp, fp, tn, fn, sup = self.infarct_sens_spec_metric(F.sigmoid(pred).detach(), target_score.detach())   
+        stats = self.infarct_sens_spec_metric(F.sigmoid(pred).detach(), target_score.detach())
+        a_tp, a_fp, a_tn, a_fn, a_sup = stats[0]
+        c_tp, c_fp, c_tn, c_fn, c_sup = stats[1]
         slc_metric = {
                     # "auc": self.infarct_auc_metric(F.sigmoid(pred).detach(), target_score.detach()), 
                     # "avg_precision": self.slc_ap_metric(pred_.detach().permute(0,2,1), target_score.detach()),
-                    "sensitivity": tp/(tp+fn),
-                    "specificity": tn/(tn+fp),
-                    "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
+                    "acute_sensitivity": a_tp/(a_tp+a_fn),
+                    "acute_specificity": a_tn/(a_tn+a_fp),
+                    "acute_youden": (a_tp/(a_tp+a_fn)) + (a_tn/(a_tn+a_fp)) - 1,
+                    "chronic_sensitivity": c_tp/(c_tp+c_fn),
+                    "chronic_specificity": c_tn/(c_tn+c_fp),
+                    "chronic_youden": (c_tp/(c_tp+c_fn)) + (c_tn/(c_tn+c_fp)) - 1,
                     }
         
         # print("infarct: ", total_loss)
@@ -168,23 +173,23 @@ class qMultiTasker(pl.LightningModule):
         torch.nan_to_num_(gt, nan=self.nan_score, posinf=self.nan_score, neginf=self.nan_score)
         torch.nan_to_num_(trg_cls, nan=self.nan_score, posinf=self.nan_score, neginf=self.nan_score)
         # normal_loss_dict, normal_loss, normal_metric = self.cls_loss_criterion(pred["normal_logits"], trg_cls, series)
-        slc_loss_dict, slc_loss, slc_metric = self.slc_loss_criterion(pred["slc_logits"], gt, series)        
+        # slc_loss_dict, slc_loss, slc_metric = self.slc_loss_criterion(pred["slc_logits"], gt, series)        
         infarct_type_loss_dict, infarct_type_loss, infarct_type_metric = self.infarct_loss_criterion(pred["acute_chronic_logits"], infarct_cls, series)
         seg_loss_dict, seg_loss, seg_metric = self.seg_loss_criterion(pred["masks"], gt, series)
         
         # loss = seg_loss + slc_loss + normal_loss + infarct_type_loss
-        loss = seg_loss + slc_loss + infarct_type_loss
+        loss = seg_loss + infarct_type_loss
         
         losses = {
             "seg": seg_loss_dict,
-            "slc": slc_loss_dict,
+            # "slc": slc_loss_dict,
             # "normal": normal_loss_dict,
             "infarct": infarct_type_loss_dict,
         }
 
         metrics = {
             "seg": seg_metric,
-            "slc": slc_metric,
+            # "slc": slc_metric,
             # "normal": normal_metric,
             "infarct": infarct_type_metric
         }
