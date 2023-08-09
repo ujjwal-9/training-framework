@@ -110,6 +110,9 @@ class InfarctDataModule(pl.LightningDataModule):
     def val_dataloader(self):
         loader = self.setup_dataloader(self.setup_dataset("valid"), self.val_batch_size)
         return loader
+    
+    # def val_dataloader(self):
+    #     pass
 
     def test_dataloader(self):
         pass
@@ -618,6 +621,7 @@ class InfarctDataset3D_60k(Dataset):
         self.dataset = pd.read_json(datapath)
         
         self.dataset = self.dataset[self.dataset['status'] == self.run_type].reset_index(drop=True)
+        self.dataset.annotpath = self.dataset.annotpath.values.astype('str')
 
         self.datapath = []
         self.targetpath = []
@@ -777,7 +781,7 @@ class InfarctDataset3D_60k(Dataset):
     
     def process_annotation_label(self, index):
         label_keys = list(self.labels[index].keys())
-        if self.targetpath[index] is None:
+        if self.targetpath[index] == "None":
             annotation = None
             return annotation
         elif self.targetpath[index].split(".")[-1] == "safetensors" or self.targetpath[index].split(".")[-1] == "safetensor":
@@ -819,7 +823,7 @@ class InfarctDataset3D_60k(Dataset):
         try:
             ct_scan, annotation, label_class, infarct_type = self.process(index)
             return *self.excute_augmentations(ct_scan, annotation), torch.Tensor(label_class).to(torch.int16), torch.Tensor(infarct_type).to(torch.int16), self.series[index]
-        except:
+        except FileNotFoundError:
             ct_scan = torch.zeros((self.args.n_slices, 3, self.args.img_size, self.args.img_size))
             annotation = torch.ones((self.args.n_slices, self.args.img_size, self.args.img_size))*-100
             label_class = [1]

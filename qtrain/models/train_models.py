@@ -40,7 +40,7 @@ class qMultiTasker(pl.LightningModule):
 
         self.seg_focal_loss = smp.losses.FocalLoss(mode="multiclass", ignore_index=self.ignore_index, reduction='none')
         self.seg_miou_metric = JaccardIndex(task="binary", num_classes=2, ignore_index=self.ignore_index)
-        self.seg_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=self.ignore_index)
+        self.seg_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
         
         self.cls_ce_loss = nn.CrossEntropyLoss(weight=torch.FloatTensor([2.,1.]), ignore_index=self.ignore_index)
         self.cls_auc_metric = AUROC(task="binary", num_classes=2, ignore_index=self.ignore_index)
@@ -53,7 +53,7 @@ class qMultiTasker(pl.LightningModule):
         self.slc_sens_spec_metric = tm.StatScores(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
         
         self.infarct_sens_spec_metric = tm.StatScores(task="multilabel", num_labels=2, ignore_index=self.ignore_index, average='none')
-        self.infarct_auc_metric = AUROC(task="multilabel", num_labels=2, ignore_index=self.ignore_index)
+        self.infarct_auc_metric = AUROC(task="binary", num_classes=2, ignore_index=self.ignore_index)
         
     def setup_model(self):
         try:
@@ -86,8 +86,13 @@ class qMultiTasker(pl.LightningModule):
 
         gt = gt.clone()
         gt[gt.sum(axis=(2,3))<=0] = self.ignore_index
-        seg_metric = {"miou": self.seg_miou_metric(F.softmax(pred).argmax(2).detach(), gt),
-                    #   "avg_precision": self.seg_ap_metric(pred_[:,:,0].detach(), gt),
+        pred_ = F.softmax(pred.detach())
+        # if len(gt) == 0:
+        #     avg_precision = torch.tensor(0.0)
+        # else:
+        #     avg_precision = self.seg_ap_metric(pred_.argmax(2), gt)
+        seg_metric = {"miou": torch.nan_to_num_(self.seg_miou_metric(pred_.argmax(2), gt)),
+                    #   "avg_precision": avg_precision,
                       }
         
         # print("seg: ", total_loss)
@@ -102,7 +107,6 @@ class qMultiTasker(pl.LightningModule):
             total_loss += loss_dict[key]
         tp, fp, tn, fn, sup = self.cls_sens_spec_metric(pred.detach().argmax(1), gt[:,0].detach().to(torch.long))
         cls_metric = {"auc": self.cls_auc_metric(pred.detach().argmax(1), gt[:,0].detach().to(torch.long)), 
-                    #   "avg_precision": self.cls_ap_metric(pred.detach()[:,1], gt.detach()),
                       "sensitivity": tp/(tp+fn),
                       "specificity": tn/(tn+fp),
                       "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
@@ -130,10 +134,18 @@ class qMultiTasker(pl.LightningModule):
             loss_dict[key] = torch.mean(loss_dict[key])
             total_loss += loss_dict[key]
 
-        tp, fp, tn, fn, sup = self.slc_sens_spec_metric(F.softmax(pred).detach().permute(0,2,1), target_score.detach())   
+        pred_ = F.softmax(pred.detach()).permute(0,2,1)
+        tp, fp, tn, fn, sup = self.slc_sens_spec_metric(pred_, target_score.detach())
+        if len(target_score[target_score>=0]) == 0:
+            auc = torch.tensor(0.0)
+            # avg_precision = torch.tensor(0.0)
+        else:
+            auc = self.slc_auc_metric(pred_, target_score.detach())
+            # avg_precision = self.slc_ap_metric(pred_, target_score.detach())
+        
         slc_metric = {
-                    # "auc": self.slc_auc_metric(F.softmax(pred).detach().permute(0,2,1), target_score.detach()), 
-                    # "avg_precision": self.slc_ap_metric(pred_.detach().permute(0,2,1), target_score.detach()),
+                    "auc": auc, 
+                    # "avg_precision": avg_precision,
                     "sensitivity": tp/(tp+fn),
                     "specificity": tn/(tn+fp),
                     "youden": (tp/(tp+fn)) + (tn/(tn+fp)) - 1
@@ -152,15 +164,28 @@ class qMultiTasker(pl.LightningModule):
             loss_dict[key] = torch.mean(loss_dict[key])
             total_loss += loss_dict[key]
 
-        stats = self.infarct_sens_spec_metric(F.sigmoid(pred).detach(), target_score.detach())
+        pred_ = F.sigmoid(pred.detach())
+        stats = self.infarct_sens_spec_metric(pred_, target_score.detach())
         a_tp, a_fp, a_tn, a_fn, a_sup = stats[0]
         c_tp, c_fp, c_tn, c_fn, c_sup = stats[1]
+        if len(target_score[:,0][target_score[:,0]>=0]) == 0:
+            acute_auc = torch.tensor(0.0)
+        else:
+            acute_auc = self.infarct_auc_metric(pred_[:,0], target_score.detach()[:,0])
+        if len(target_score[:,1][target_score[:,1]>=0]) == 0:
+            chronic_auc = torch.tensor(0.0)
+        else:
+            chronic_auc = self.infarct_auc_metric(pred_[:,1], target_score.detach()[:,1])
+        
         slc_metric = {
                     # "auc": self.infarct_auc_metric(F.sigmoid(pred).detach(), target_score.detach()), 
                     # "avg_precision": self.slc_ap_metric(pred_.detach().permute(0,2,1), target_score.detach()),
+                    "acute_auc": acute_auc,
                     "acute_sensitivity": a_tp/(a_tp+a_fn),
                     "acute_specificity": a_tn/(a_tn+a_fp),
                     "acute_youden": (a_tp/(a_tp+a_fn)) + (a_tn/(a_tn+a_fp)) - 1,
+                    
+                    "chronic_auc": chronic_auc,
                     "chronic_sensitivity": c_tp/(c_tp+c_fn),
                     "chronic_specificity": c_tn/(c_tn+c_fp),
                     "chronic_youden": (c_tp/(c_tp+c_fn)) + (c_tn/(c_tn+c_fp)) - 1,
@@ -490,7 +515,7 @@ class qSegAndClass(pl.LightningModule):
         return y_hat
 
     def configure_optimizers(self):
-        optimizer = self.args.optimizer(self.model.parameters(), **self.args.optimizer_params)
+        optimizer = self.args.optimizer(self.parameters(), **self.args.optimizer_params)
         scheduler = self.args.scheduler(optimizer, **self.args.scheduler_params)
         if 'ReduceLROnPlateau' in str(scheduler):
             return [optimizer], [{'scheduler': scheduler, 'monitor': 'valid/loss'}]
