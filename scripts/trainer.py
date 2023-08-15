@@ -26,6 +26,8 @@ import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 torch.multiprocessing.set_sharing_strategy('file_system')
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:21"
+os.environ["OMP_NUM_THREADS"] = "1" 
+os.environ["MKL_NUM_THREADS"] = "1" 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--exp', type=str, help='Name of experiment')
@@ -53,39 +55,39 @@ dm = InfarctDataModule(args)
 #     args.scheduler_params.total_steps = args.training_samples // args.batch_size * args.max_epoch
 
 model =  qMultiTasker(args)
+callbacks_to_minitor = []
 
 metrics_to_monitor = [
     {"monitor": "valid_loss", "mode": 'min', "filename": "{valid_loss:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
     {"monitor": "train_loss", "mode": 'min', "filename": "{train_loss:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
     # {"monitor": "valid_normal_ce", "mode": 'min', "filename": "valid_normal_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_ce:.2f}"},
     {"monitor": "valid_infarct_bce", "mode": 'min', "filename": "{valid_infarct_bce:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    # {"monitor": "valid_slc_bce", "mode": 'min', "filename": "{valid_slc_bce:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_slc_bce", "mode": 'min', "filename": "{valid_slc_bce:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
     {"monitor": "valid_seg_focal", "mode": 'min', "filename": "{valid_seg_focal:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
 
-    {"monitor": "valid_infarct_acute_sensitivity", "mode": 'max', "filename": "{valid_infarct_acute_sensitivity:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    {"monitor": "valid_infarct_acute_specificity", "mode": 'max', "filename": "{valid_infarct_acute_specificity:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    {"monitor": "valid_infarct_acute_youden", "mode": 'max', "filename": "{valid_infarct_acute_youden:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    {"monitor": "valid_infarct_acute_auc", "mode": 'max', "filename": "{valid_infarct_acute_auc:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_infarct_epoch_acute_sensitivity", "mode": 'max', "filename": "{valid_infarct_epoch_acute_sensitivity:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_infarct_epoch_acute_specificity", "mode": 'max', "filename": "{valid_infarct_epoch_acute_specificity:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_infarct_epoch_acute_youden", "mode": 'max', "filename": "{valid_infarct_epoch_acute_youden:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_infarct_epoch_acute_auc", "mode": 'max', "filename": "{valid_infarct_epoch_acute_auc:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
 
-    {"monitor": "valid_infarct_chronic_sensitivity", "mode": 'max', "filename": "{valid_infarct_chronic_sensitivity:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    {"monitor": "valid_infarct_chronic_specificity", "mode": 'max', "filename": "{valid_infarct_chronic_specificity:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    {"monitor": "valid_infarct_chronic_youden", "mode": 'max', "filename": "{valid_infarct_chronic_youden:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    {"monitor": "valid_infarct_chronic_auc", "mode": 'max', "filename": "{valid_infarct_chronic_auc:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_infarct_epoch_chronic_sensitivity", "mode": 'max', "filename": "{valid_infarct_epoch_chronic_sensitivity:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_infarct_epoch_chronic_specificity", "mode": 'max', "filename": "{valid_infarct_epoch_chronic_specificity:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_infarct_epoch_chronic_youden", "mode": 'max', "filename": "{valid_infarct_epoch_chronic_youden:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_infarct_epoch_chronic_auc", "mode": 'max', "filename": "{valid_infarct_epoch_chronic_auc:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
 
     # {"monitor": "valid_normal_sensitivity", "mode": 'max', "filename": "valid_normal_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_sensitivity:2f}"},
     # {"monitor": "valid_normal_specificity", "mode": 'max', "filename": "valid_normal_specificity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_specificity:.2f}"},
     # {"monitor": "valid_normal_youden", "mode": 'max', "filename": "valid_normal_youden_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_youden:.2f}"},
     # {"monitor": "valid_normal_auc", "mode": 'max', "filename": "valid_normal_auc_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_auc:.2f}"},
     
-    {"monitor": "valid_seg_miou", "mode": 'max', "filename": "{valid_seg_miou:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_seg_epoch_miou", "mode": 'max', "filename": "{valid_seg_epoch_miou:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
     
-    # {"monitor": "valid_slc_sensitivity", "mode": 'max', "filename": "{valid_slc_sensitivity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    # {"monitor": "valid_slc_specificity", "mode": 'max', "filename": "{valid_slc_specificity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    # {"monitor": "valid_slc_youden", "mode": 'max', "filename": "{valid_slc_youden:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
-    # {"monitor": "valid_slc_auc", "mode": 'max', "filename": "{valid_slc_auc:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_slc_epoch_sensitivity", "mode": 'max', "filename": "{valid_slc_epoch_sensitivity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_slc_epoch_specificity", "mode": 'max', "filename": "{valid_slc_epoch_specificity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_slc_epoch_youden", "mode": 'max', "filename": "{valid_slc_epoch_youden:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
+    {"monitor": "valid_slc_epoch_auc", "mode": 'max', "filename": "{valid_slc_epoch_auc:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}"},
 ]
 
-callbacks_to_minitor = []
 for metrics_ in metrics_to_monitor:
     callbacks_to_minitor.append(
         pl.callbacks.ModelCheckpoint(filename=metrics_["filename"],
@@ -96,8 +98,16 @@ for metrics_ in metrics_to_monitor:
                                     )
         )
 
+
+if args.stochastic_weight_averaging:
+    from pytorch_lightning.callbacks import StochasticWeightAveraging
+    callbacks_to_minitor.append(StochasticWeightAveraging(
+        swa_lrs=args.swa_lrs,
+        swa_epoch_start=args.swa_epoch_start
+    ))
+
+early_stopping = EarlyStopping(monitor=args.monitor, patience=args.patience)
 lr_monitor = LearningRateMonitor(logging_interval='step')
-early_stopping = EarlyStopping(monitor="valid_loss", patience=args.patience)
 
 callbacks_to_minitor.extend([lr_monitor, early_stopping])
 
@@ -135,7 +145,7 @@ trainer = pl.Trainer(accelerator="auto",
                      detect_anomaly=False,
                      num_sanity_val_steps=0,
                     #  overfit_batches=10,
-                    #  limit_val_batches=0.0
+                    #  limit_val_batches=0.1
                     )
 
 if __name__ == "__main__":

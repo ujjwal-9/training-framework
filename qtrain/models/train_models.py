@@ -20,6 +20,7 @@ from torchmetrics.classification import AUROC, JaccardIndex
 import qtrain
 from qtrain.models.unet.multitasker import MultiTaskSeqAttn
 from qtrain.models.unet.unet2dseqattn import UnetSeqAttn
+from qtrain.metrics.jaccard import mean_iou_ignore_idx
 
 
 class qMultiTasker(pl.LightningModule):
@@ -39,21 +40,37 @@ class qMultiTasker(pl.LightningModule):
         self.ignore_index = self.args.ignore_index
 
         self.seg_focal_loss = smp.losses.FocalLoss(mode="multiclass", ignore_index=self.ignore_index, reduction='none')
-        self.seg_miou_metric = JaccardIndex(task="binary", num_classes=2, ignore_index=self.ignore_index)
-        self.seg_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
+        # self.seg_miou_metric = JaccardIndex(task="binary", num_classes=2, ignore_index=self.ignore_index)
+        self.seg_miou_metric = mean_iou_ignore_idx
+        self.epoch_iou_storage = []
+        self.train_epoch_iou_storage = []
+        # self.seg_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
         
         self.cls_ce_loss = nn.CrossEntropyLoss(weight=torch.FloatTensor([2.,1.]), ignore_index=self.ignore_index)
         self.cls_auc_metric = AUROC(task="binary", num_classes=2, ignore_index=self.ignore_index)
-        self.cls_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=self.ignore_index)
+        # self.cls_ap_metric = tm.AveragePrecision(task="binary", num_classes=2, ignore_index=self.ignore_index)
         self.cls_sens_spec_metric = tm.StatScores(task="binary", num_classes=2, ignore_index=self.ignore_index)
 
         self.slc_bce_loss = nn.BCEWithLogitsLoss(reduction='none')
         self.slc_auc_metric = AUROC(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
-        self.slc_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
+        # self.slc_ap_metric = tm.AveragePrecision(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
         self.slc_sens_spec_metric = tm.StatScores(task="multiclass", num_classes=2, ignore_index=self.ignore_index)
+        self.slc_confusion_matrix = defaultdict(int)
+        self.slc_scores = defaultdict(list)
+        self.train_slc_confusion_matrix = defaultdict(int)
+        self.train_slc_scores = defaultdict(list)
         
         self.infarct_sens_spec_metric = tm.StatScores(task="multilabel", num_labels=2, ignore_index=self.ignore_index, average='none')
         self.infarct_auc_metric = AUROC(task="binary", num_classes=2, ignore_index=self.ignore_index)
+        self.acute_confusion_matrix = defaultdict(int)
+        self.acute_scores = defaultdict(list)
+        self.chronic_confusion_matrix = defaultdict(int)
+        self.chronic_scores = defaultdict(list)
+        self.train_acute_confusion_matrix = defaultdict(int)
+        self.train_acute_scores = defaultdict(list)
+        self.train_chronic_confusion_matrix = defaultdict(int)
+        self.train_chronic_scores = defaultdict(list)
+        
         
     def setup_model(self):
         try:
@@ -70,7 +87,7 @@ class qMultiTasker(pl.LightningModule):
         z = self.model(z)
         return z
     
-    def seg_loss_criterion(self, pred, gt, series):  
+    def seg_loss_criterion(self, pred, gt, series, prefix):  
         seg_losses = {"focal": self.seg_focal_loss}
 
         total_loss = 0.0
@@ -86,19 +103,18 @@ class qMultiTasker(pl.LightningModule):
 
         gt = gt.clone()
         gt[gt.sum(axis=(2,3))<=0] = self.ignore_index
-        pred_ = F.softmax(pred.detach())
-        # if len(gt) == 0:
-        #     avg_precision = torch.tensor(0.0)
-        # else:
-        #     avg_precision = self.seg_ap_metric(pred_.argmax(2), gt)
-        seg_metric = {"miou": torch.nan_to_num_(self.seg_miou_metric(pred_.argmax(2), gt)),
-                    #   "avg_precision": avg_precision,
-                      }
+        pred_ = F.softmax(pred.detach()).argmax(2)
+
+        if prefix == "train":
+            self.train_epoch_iou_storage.extend(self.seg_miou_metric(pred_.view(-1, *pred_.size()[2:]), gt.view(-1, *gt.size()[2:])).tolist())
+        else:
+            self.epoch_iou_storage.extend(self.seg_miou_metric(pred_.view(-1, *pred_.size()[2:]), gt.view(-1, *gt.size()[2:]).tolist()))
         
+        seg_metric = None
         # print("seg: ", total_loss)
         return loss_dict, total_loss, seg_metric
 
-    def cls_loss_criterion(self, pred, gt, series):
+    def cls_loss_criterion(self, pred, gt, series, prefix):
         cls_losses = {"ce": self.cls_ce_loss}
         total_loss = 0.0
         loss_dict = {}
@@ -115,7 +131,7 @@ class qMultiTasker(pl.LightningModule):
         # print("cls: ", total_loss)
         return loss_dict, total_loss, cls_metric
         
-    def slc_loss_criterion(self, pred, gt, series):
+    def slc_loss_criterion(self, pred, gt, series, prefix):
         slc_losses = {"bce": self.slc_bce_loss}
         target_score = gt.sum(axis=(2,3))
         
@@ -136,15 +152,33 @@ class qMultiTasker(pl.LightningModule):
 
         pred_ = F.softmax(pred.detach()).permute(0,2,1)
         tp, fp, tn, fn, sup = self.slc_sens_spec_metric(pred_, target_score.detach())
-        if len(target_score[target_score>=0]) == 0:
-            auc = torch.tensor(0.0)
-            # avg_precision = torch.tensor(0.0)
+        
+        if prefix == "train":
+            self.train_slc_scores['scores'].append(pred_.detach())
+            self.train_slc_scores['gt'].append(target_score.detach())
+            
+            self.train_slc_confusion_matrix['tp'] += tp.item()
+            self.train_slc_confusion_matrix['fp'] += fp.item()
+            self.train_slc_confusion_matrix['tn'] += tn.item()
+            self.train_slc_confusion_matrix['fn'] += fn.item()
         else:
-            auc = self.slc_auc_metric(pred_, target_score.detach())
+            self.slc_scores['scores'].append(pred_.detach())
+            self.slc_scores['gt'].append(target_score.detach())
+            
+            self.slc_confusion_matrix['tp'] += tp.item()
+            self.slc_confusion_matrix['fp'] += fp.item()
+            self.slc_confusion_matrix['tn'] += tn.item()
+            self.slc_confusion_matrix['fn'] += fn.item()
+        
+        # if len(target_score[target_score>=0]) == 0:
+        #     auc = torch.tensor(0.0)
+        #     # avg_precision = torch.tensor(0.0)
+        # else:
+        #     auc = self.slc_auc_metric(pred_, target_score.detach())
             # avg_precision = self.slc_ap_metric(pred_, target_score.detach())
         
         slc_metric = {
-                    "auc": auc, 
+                    # "auc": auc, 
                     # "avg_precision": avg_precision,
                     "sensitivity": tp/(tp+fn),
                     "specificity": tn/(tn+fp),
@@ -154,7 +188,7 @@ class qMultiTasker(pl.LightningModule):
         # print("slc: ", total_loss)
         return loss_dict, total_loss, slc_metric
     
-    def infarct_loss_criterion(self, pred, target_score, series):
+    def infarct_loss_criterion(self, pred, target_score, serie, prefix):
         slc_losses = {"bce": self.slc_bce_loss}
 
         total_loss = 0.0
@@ -168,24 +202,59 @@ class qMultiTasker(pl.LightningModule):
         stats = self.infarct_sens_spec_metric(pred_, target_score.detach())
         a_tp, a_fp, a_tn, a_fn, a_sup = stats[0]
         c_tp, c_fp, c_tn, c_fn, c_sup = stats[1]
-        if len(target_score[:,0][target_score[:,0]>=0]) == 0:
-            acute_auc = torch.tensor(0.0)
+        if prefix == "train":
+            self.train_acute_confusion_matrix['tp'] += a_tp.item()
+            self.train_acute_confusion_matrix['fp'] += a_fp.item()
+            self.train_acute_confusion_matrix['tn'] += a_tn.item()
+            self.train_acute_confusion_matrix['fn'] += a_fn.item()
+            self.train_chronic_confusion_matrix['tp'] += c_tp.item()
+            self.train_chronic_confusion_matrix['fp'] += c_fp.item()
+            self.train_chronic_confusion_matrix['tn'] += c_tn.item()
+            self.train_chronic_confusion_matrix['fn'] += c_fn.item()
+            self.train_acute_scores['scores'].append(pred_[:,0].detach())
+            self.train_acute_scores['gt'].append(target_score[:,0].detach())
+
+            self.train_chronic_scores['scores'].append(pred_[:,1].detach())
+            self.train_chronic_scores['gt'].append(target_score[:,1].detach())
         else:
-            acute_auc = self.infarct_auc_metric(pred_[:,0], target_score.detach()[:,0])
-        if len(target_score[:,1][target_score[:,1]>=0]) == 0:
-            chronic_auc = torch.tensor(0.0)
-        else:
-            chronic_auc = self.infarct_auc_metric(pred_[:,1], target_score.detach()[:,1])
+            self.acute_confusion_matrix['tp'] += a_tp.item()
+            self.acute_confusion_matrix['fp'] += a_fp.item()
+            self.acute_confusion_matrix['tn'] += a_tn.item()
+            self.acute_confusion_matrix['fn'] += a_fn.item()
+            self.chronic_confusion_matrix['tp'] += c_tp.item()
+            self.chronic_confusion_matrix['fp'] += c_fp.item()
+            self.chronic_confusion_matrix['tn'] += c_tn.item()
+            self.chronic_confusion_matrix['fn'] += c_fn.item()
+            self.acute_scores['scores'].append(pred_[:,0].detach())
+            self.acute_scores['gt'].append(target_score[:,0].detach())
+
+            self.chronic_scores['scores'].append(pred_[:,1].detach())
+            self.chronic_scores['gt'].append(target_score[:,1].detach())
         
+        # if len(target_score[:,0][target_score[:,0]>=0]) == 0:
+        #     acute_auc = -100
+        # else:
+        #     acute_auc = self.infarct_auc_metric(pred_[:,0], target_score.detach()[:,0])
+        # if len(target_score[:,1][target_score[:,1]>=0]) == 0:
+        #     chronic_auc = -100
+        # else:
+        #     chronic_auc = self.infarct_auc_metric(pred_[:,1], target_score.detach()[:,1])
+        
+        # self.acute_scores['scores'].append(pred_[:,0][target_score[:,0]>=0].detach())
+        # self.acute_scores['gt'].append(target_score[:,0][target_score[:,0]>=0].detach())
+
+        # self.chronic_scores['scores'].append(pred_[:,1][target_score[:,1]>=0].detach())
+        # self.chronic_scores['gt'].append(target_score[:,1][target_score[:,1]>=0].detach())
+
         slc_metric = {
                     # "auc": self.infarct_auc_metric(F.sigmoid(pred).detach(), target_score.detach()), 
                     # "avg_precision": self.slc_ap_metric(pred_.detach().permute(0,2,1), target_score.detach()),
-                    "acute_auc": acute_auc,
+                    # "acute_auc": acute_auc,
                     "acute_sensitivity": a_tp/(a_tp+a_fn),
                     "acute_specificity": a_tn/(a_tn+a_fp),
                     "acute_youden": (a_tp/(a_tp+a_fn)) + (a_tn/(a_tn+a_fp)) - 1,
                     
-                    "chronic_auc": chronic_auc,
+                    # "chronic_auc": chronic_auc,
                     "chronic_sensitivity": c_tp/(c_tp+c_fn),
                     "chronic_specificity": c_tn/(c_tn+c_fp),
                     "chronic_youden": (c_tp/(c_tp+c_fn)) + (c_tn/(c_tn+c_fp)) - 1,
@@ -198,23 +267,23 @@ class qMultiTasker(pl.LightningModule):
         torch.nan_to_num_(gt, nan=self.nan_score, posinf=self.nan_score, neginf=self.nan_score)
         torch.nan_to_num_(trg_cls, nan=self.nan_score, posinf=self.nan_score, neginf=self.nan_score)
         # normal_loss_dict, normal_loss, normal_metric = self.cls_loss_criterion(pred["normal_logits"], trg_cls, series)
-        # slc_loss_dict, slc_loss, slc_metric = self.slc_loss_criterion(pred["slc_logits"], gt, series)        
-        infarct_type_loss_dict, infarct_type_loss, infarct_type_metric = self.infarct_loss_criterion(pred["acute_chronic_logits"], infarct_cls, series)
-        seg_loss_dict, seg_loss, seg_metric = self.seg_loss_criterion(pred["masks"], gt, series)
+        slc_loss_dict, slc_loss, slc_metric = self.slc_loss_criterion(pred["slc_logits"], gt, series, prefix)        
+        infarct_type_loss_dict, infarct_type_loss, infarct_type_metric = self.infarct_loss_criterion(pred["acute_chronic_logits"], infarct_cls, series, prefix)
+        seg_loss_dict, seg_loss, seg_metric = self.seg_loss_criterion(pred["masks"], gt, series, prefix)
         
         # loss = seg_loss + slc_loss + normal_loss + infarct_type_loss
-        loss = seg_loss + infarct_type_loss
+        loss = seg_loss + slc_loss + infarct_type_loss
         
         losses = {
             "seg": seg_loss_dict,
-            # "slc": slc_loss_dict,
+            "slc": slc_loss_dict,
             # "normal": normal_loss_dict,
             "infarct": infarct_type_loss_dict,
         }
 
         metrics = {
-            "seg": seg_metric,
-            # "slc": slc_metric,
+            # "seg": seg_metric,
+            "slc": slc_metric,
             # "normal": normal_metric,
             "infarct": infarct_type_metric
         }
@@ -234,12 +303,58 @@ class qMultiTasker(pl.LightningModule):
                 continue
             else:
                 for l in metrics[key]:
-                    if torch.isnan(metrics[key][l]):
-                        metrics[key][l] = torch.tensor(self.nan_score, device=self.device)
-                    log_metrics[prefix+"_"+key+"_"+l] = metrics[key][l]
+                    if type(metrics[key][l]) == list:
+                        metrics[key][l] = torch.mean(torch.tensor(metrics[key][l]))
+                    # if torch.isnan(metrics[key][l]):
+                    #     metrics[key][l] = torch.tensor(self.nan_score, device=self.device)
+                    log_metrics[prefix+"_"+key+"_batch_"+l] = metrics[key][l]
         
         return loss, log_losses, log_metrics
     
+    def compute_epoch_metric(self, prefix):
+        if prefix == "train":
+            epoch_metric = defaultdict()
+            epoch_metric[f'{prefix}_seg_epoch_miou'] = torch.mean(torch.tensor(self.train_epoch_iou_storage))
+
+            epoch_metric[f'{prefix}_slc_epoch_auc'] = self.slc_auc_metric(torch.vstack(self.train_slc_scores['scores']), torch.vstack(self.train_slc_scores['gt']))
+            epoch_metric[f'{prefix}_slc_epoch_sensitivity'] = (self.train_slc_confusion_matrix['tp']+1e-6) / (self.train_slc_confusion_matrix['tp']+self.train_slc_confusion_matrix['fn']+1e-6)
+            epoch_metric[f'{prefix}_slc_epoch_specificity'] = (self.train_slc_confusion_matrix['tn']+1e-6) / (self.train_slc_confusion_matrix['tn']+self.train_slc_confusion_matrix['fp']+1e-6)
+            epoch_metric[f'{prefix}_slc_epoch_youden'] = epoch_metric[f'{prefix}_slc_epoch_sensitivity'] + epoch_metric[f'{prefix}_slc_epoch_specificity'] -1
+
+            epoch_metric[f'{prefix}_infarct_epoch_acute_auc'] = self.infarct_auc_metric(torch.vstack(self.train_acute_scores['scores']),torch.vstack(self.train_acute_scores['gt']))
+            epoch_metric[f'{prefix}_infarct_epoch_acute_sensitivity'] = (self.train_acute_confusion_matrix['tp']+1e-6) / (self.train_acute_confusion_matrix['tp']+self.train_acute_confusion_matrix['fn']+1e-6)
+            epoch_metric[f'{prefix}_infarct_epoch_acute_specificity'] = (self.train_acute_confusion_matrix['tn']+1e-6) / (self.train_acute_confusion_matrix['tn']+self.train_acute_confusion_matrix['fp']+1e-6)
+            epoch_metric[f'{prefix}_infarct_epoch_acute_youden'] = epoch_metric[f'{prefix}_infarct_epoch_acute_sensitivity'] + epoch_metric[f'{prefix}_infarct_epoch_acute_specificity'] - 1
+
+            epoch_metric[f'{prefix}_infarct_epoch_chronic_auc'] = self.infarct_auc_metric(torch.vstack(self.train_chronic_scores['scores']), torch.vstack(self.train_chronic_scores['gt']))
+            epoch_metric[f'{prefix}_infarct_epoch_chronic_sensitivity'] = (self.train_chronic_confusion_matrix['tp']+1e-6) / (self.train_chronic_confusion_matrix['tp']+self.train_chronic_confusion_matrix['fn']+1e-6)
+            epoch_metric[f'{prefix}_infarct_epoch_chronic_specificity'] = (self.train_chronic_confusion_matrix['tn']+1e-6) / (self.train_chronic_confusion_matrix['tn']+self.train_chronic_confusion_matrix['fp']+1e-6)
+            epoch_metric[f'{prefix}_infarct_epoch_chronic_youden'] = epoch_metric[f'{prefix}_infarct_epoch_chronic_sensitivity'] + epoch_metric[f'{prefix}_infarct_epoch_chronic_specificity'] - 1
+        else:
+            epoch_metric = defaultdict()
+            epoch_metric[f'{prefix}_seg_epoch_miou'] = torch.mean(torch.tensor(self.epoch_iou_storage))
+
+            epoch_metric[f'{prefix}_slc_epoch_auc'] = self.slc_auc_metric(torch.vstack(self.slc_scores['scores']), torch.vstack(self.slc_scores['gt']))
+            epoch_metric[f'{prefix}_slc_epoch_sensitivity'] = (self.slc_confusion_matrix['tp']+1e-6) / (self.slc_confusion_matrix['tp']+self.slc_confusion_matrix['fn']+1e-6)
+            epoch_metric[f'{prefix}_slc_epoch_specificity'] = (self.slc_confusion_matrix['tn']+1e-6) / (self.slc_confusion_matrix['tn']+self.slc_confusion_matrix['fp']+1e-6)
+            epoch_metric[f'{prefix}_slc_epoch_youden'] = epoch_metric[f'{prefix}_slc_epoch_sensitivity'] + epoch_metric[f'{prefix}_slc_epoch_specificity'] -1
+
+            epoch_metric[f'{prefix}_infarct_epoch_acute_auc'] = self.infarct_auc_metric(torch.vstack(self.acute_scores['scores']),torch.vstack(self.acute_scores['gt']))
+            epoch_metric[f'{prefix}_infarct_epoch_acute_sensitivity'] = (self.acute_confusion_matrix['tp']+1e-6) / (self.acute_confusion_matrix['tp']+self.acute_confusion_matrix['fn']+1e-6)
+            epoch_metric[f'{prefix}_infarct_epoch_acute_specificity'] = (self.acute_confusion_matrix['tn']+1e-6) / (self.acute_confusion_matrix['tn']+self.acute_confusion_matrix['fp']+1e-6)
+            epoch_metric[f'{prefix}_infarct_epoch_acute_youden'] = epoch_metric[f'{prefix}_infarct_epoch_acute_sensitivity'] + epoch_metric[f'{prefix}_infarct_epoch_acute_specificity'] - 1
+
+            epoch_metric[f'{prefix}_infarct_epoch_chronic_auc'] = self.infarct_auc_metric(torch.vstack(self.chronic_scores['scores']), torch.vstack(self.chronic_scores['gt']))
+            epoch_metric[f'{prefix}_infarct_epoch_chronic_sensitivity'] = (self.chronic_confusion_matrix['tp']+1e-6) / (self.chronic_confusion_matrix['tp']+self.chronic_confusion_matrix['fn']+1e-6)
+            epoch_metric[f'{prefix}_infarct_epoch_chronic_specificity'] = (self.chronic_confusion_matrix['tn']+1e-6 ) / (self.chronic_confusion_matrix['tn']+self.chronic_confusion_matrix['fp']+1e-6)
+            epoch_metric[f'{prefix}_infarct_epoch_chronic_youden'] = epoch_metric[f'{prefix}_infarct_epoch_chronic_sensitivity'] + epoch_metric[f'{prefix}_infarct_epoch_chronic_specificity'] - 1
+        
+        
+        self.log_dict(epoch_metric, on_step=False,
+                      on_epoch=True, batch_size=self.args.batch_size, 
+                      prog_bar=False,rank_zero_only=True)
+
+
     def compute_batch(self, batch, batch_idx, prefix='train'):
         ct, gt_segmentation_map, trg_cls, infarct_cls, series = batch
         torch.nan_to_num_(ct, nan=self.nan_score, posinf=self.nan_score, neginf=self.nan_score)
@@ -259,6 +374,16 @@ class qMultiTasker(pl.LightningModule):
                       on_epoch=True, batch_size=self.args.batch_size, 
                       prog_bar=True,rank_zero_only=True)
         return loss
+
+    def on_train_epoch_end(self):
+        self.compute_epoch_metric(prefix="train")
+        self.train_epoch_iou_storage.clear()
+        self.train_acute_confusion_matrix.clear()
+        self.train_acute_scores.clear()
+        self.train_chronic_confusion_matrix.clear()
+        self.train_chronic_scores.clear()
+        self.train_slc_confusion_matrix.clear()
+        self.train_slc_scores.clear()
     
     def validation_step(self, batch, batch_idx):
         loss, log_losses, log_metrics = self.compute_batch(batch, batch_idx, prefix="valid")
@@ -273,6 +398,17 @@ class qMultiTasker(pl.LightningModule):
                       prog_bar=True,rank_zero_only=True)
         return loss
 
+    def on_validation_epoch_end(self):
+        self.compute_epoch_metric(prefix="valid")
+        self.epoch_iou_storage.clear()
+        self.acute_confusion_matrix.clear()
+        self.acute_scores.clear()
+        self.chronic_confusion_matrix.clear()
+        self.chronic_scores.clear()
+        self.slc_confusion_matrix.clear()
+        self.slc_scores.clear()
+
+
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         ct, gt_segmentation_map, trg_cls = batch
         y_hat = self.model(ct)
@@ -282,7 +418,7 @@ class qMultiTasker(pl.LightningModule):
         optimizer = self.args.optimizer(self.model.parameters(), **self.args.optimizer_params)
         scheduler = self.args.scheduler(optimizer, **self.args.scheduler_params)
         if 'ReduceLROnPlateau' in str(scheduler):
-            return [optimizer], [{'scheduler': scheduler, 'monitor': 'valid_loss'}]
+            return [optimizer], [{'scheduler': scheduler, 'monitor': self.args.monitor}]
         if 'CyclicLR' in str(scheduler):
             scheduler.state_dict().pop("_scale_fn_ref")
             

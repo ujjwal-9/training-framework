@@ -74,8 +74,8 @@ class MultiTaskNet(torch.nn.Module):
         )
         output["masks"] = masks
 
-        # slice_out = self.multi_fc(embeddings)
-        # output["slc_logits"] = slice_out[0]
+        slice_out = self.multi_fc(embeddings)
+        output["slc_logits"] = slice_out[0]
         output["acute_chronic_logits"] = self.acute_chronic_fc(self.acute_chronic_multi_fc(embeddings)[0].permute(1,0)).T
         # output["normal_logits"] = self.normal_fc(self.normal_multi_fc(embeddings)[0].permute(1,0)).T
 

@@ -93,7 +93,7 @@ class InfarctDataModule(pl.LightningDataModule):
             batch_size=batch_size,
             num_workers=self.num_workers,
             drop_last=True,
-            pin_memory=True,
+            # pin_memory=True,
             shuffle= shuffle,
             sampler=sampler,
             prefetch_factor=self.args.prefetch
@@ -823,7 +823,7 @@ class InfarctDataset3D_60k(Dataset):
         try:
             ct_scan, annotation, label_class, infarct_type = self.process(index)
             return *self.excute_augmentations(ct_scan, annotation), torch.Tensor(label_class).to(torch.int16), torch.Tensor(infarct_type).to(torch.int16), self.series[index]
-        except FileNotFoundError:
+        except:
             ct_scan = torch.zeros((self.args.n_slices, 3, self.args.img_size, self.args.img_size))
             annotation = torch.ones((self.args.n_slices, self.args.img_size, self.args.img_size))*-100
             label_class = [1]
