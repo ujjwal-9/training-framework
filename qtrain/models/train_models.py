@@ -108,7 +108,7 @@ class qMultiTasker(pl.LightningModule):
         if prefix == "train":
             self.train_epoch_iou_storage.extend(self.seg_miou_metric(pred_.view(-1, *pred_.size()[2:]), gt.view(-1, *gt.size()[2:])).tolist())
         else:
-            self.epoch_iou_storage.extend(self.seg_miou_metric(pred_.view(-1, *pred_.size()[2:]), gt.view(-1, *gt.size()[2:]).tolist()))
+            self.epoch_iou_storage.extend(self.seg_miou_metric(pred_.view(-1, *pred_.size()[2:]), gt.view(-1, *gt.size()[2:])).tolist())
         
         seg_metric = None
         # print("seg: ", total_loss)
