@@ -107,7 +107,7 @@ if args.stochastic_weight_averaging:
     ))
 
 early_stopping = EarlyStopping(monitor=args.monitor, patience=args.patience)
-lr_monitor = LearningRateMonitor(logging_interval='step')
+lr_monitor = LearningRateMonitor(logging_interval="epoch")
 
 callbacks_to_minitor.extend([lr_monitor, early_stopping])
 
