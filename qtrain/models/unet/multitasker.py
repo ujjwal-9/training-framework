@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 
+import qer_utils
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.base import SegmentationHead
 from segmentation_models_pytorch.decoders.unet.decoder import UnetDecoder
@@ -16,13 +17,14 @@ class MultiTaskSeqAttn(nn.Module):
         super().__init__()
         self.args = args
 
-        self.encoder = smp.encoders.get_encoder(name=self.args.encoder_name,
-                                                in_channels=self.args.in_channels,
-                                                depth=self.args.depth,
-                                                output_stride=self.args.output_stride, 
-                                                weights='imagenet')
+        self.encoder = smp.encoders.get_encoder(
+            name=self.args.encoder_name,
+            in_channels=self.args.in_channels,
+            depth=self.args.depth,
+            output_stride=self.args.output_stride,
+            weights="imagenet",
+        )
 
-            
         self.decoder = UnetDecoder(
             encoder_channels=self.encoder.out_channels,
             decoder_channels=self.args.decoder_channels,
@@ -31,14 +33,14 @@ class MultiTaskSeqAttn(nn.Module):
             attention_type=self.args.attention_type,
             center=True if self.args.encoder_name.startswith("vgg") else False,
         )
-        
+
         self.segmentation_head = SegmentationHead(
             in_channels=self.args.decoder_channels[-1],
             out_channels=self.args.n_segmaps,
             activation=self.args.seg_activation,
             kernel_size=self.args.kernel_size,
         )
-            
+
         self.slc_classification_head = ClassificationHead(
             in_channels=self.encoder.out_channels[-1],
             classes=self.args.cls_nclasses,
@@ -54,7 +56,7 @@ class MultiTaskSeqAttn(nn.Module):
             dropout=self.args.cls_ac_dropout,
             activation=None,
         )
-        
+
         self.acute_chronic_fc = nn.Linear(self.args.n_slices, 1)
 
         self.normal_classification_head = ClassificationHead(
@@ -65,7 +67,9 @@ class MultiTaskSeqAttn(nn.Module):
             activation=None,
         )
 
-        self.se_blocks = nn.ModuleList([SqueezeExcitation(self.args.n_slices, 5) for i in range(self.args.depth)])
+        self.se_blocks = nn.ModuleList(
+            [SqueezeExcitation(self.args.n_slices, 5) for i in range(self.args.depth)]
+        )
 
         self.initialize()
 
@@ -77,32 +81,49 @@ class MultiTaskSeqAttn(nn.Module):
         init.initialize_head(self.normal_classification_head)
         init.initialize_head(self.acute_chronic_fc)
 
-    def forward(self, ct, features=False):
+    def forward(self, ct, emb_pred_concat=False, embedding=False):
         """Sequentially pass `x` trough model`s encoder, decoder and heads"""
         output = defaultdict(list)
         batch_size = ct.size(0)
         # z_size = ct.size(1)
         for bsz in range(batch_size):
-            
             features = self.encoder(ct[bsz])
-            for i in range(1,len(features)):
-                features[i] = self.se_blocks[i-1](features[i].permute(1,0,2,3)).permute(1,0,2,3)
-            
+            for i in range(1, len(features)):
+                features[i] = self.se_blocks[i - 1](
+                    features[i].permute(1, 0, 2, 3)
+                ).permute(1, 0, 2, 3)
+
             decoder_output = self.decoder(*features)
             masks = self.segmentation_head(decoder_output)
+            if emb_pred_concat:
+                masks = torch.nn.functional.interpolate(
+                    masks, size=inp_shape, mode="bilinear", align_corners=False
+                )
+
+                embeddings = torch.cat(
+                    [
+                        embeddings,
+                        qer_utils.nn.models.pooling.pool(decoder_output, "max"),
+                    ],
+                    dim=1,
+                )
             slc_logits = self.slc_classification_head(features[-1])
             acute_chronic_logits = self.acute_chronic_classification_head(features[-1])
             normal_logits = self.normal_classification_head(features[-1])
-            
+
             output["masks"].append(masks)
             output["slc_logits"].append(slc_logits)
             output["acute_chronic_logits"].append(acute_chronic_logits)
-            output["normal_logits"].append(normal_logits)
-            if features:
-                output["features"].append(features)
+            # output["normal_logits"].append(normal_logits)
+            if embedding:
+                output["embedding"].append(features[-1])
 
         output["masks"] = torch.stack(output["masks"])
         output["slc_logits"] = torch.stack(output["slc_logits"])
-        output["acute_chronic_logits"] = self.acute_chronic_fc(torch.stack(output["acute_chronic_logits"]).permute(0,2,1))[:,:,0]
-        output["normal_logits"] = lse_pooling(torch.stack(output["normal_logits"]).permute(0,2,1))
+        output["acute_chronic_logits"] = self.acute_chronic_fc(
+            torch.stack(output["acute_chronic_logits"]).permute(0, 2, 1)
+        )[:, :, 0]
+        # output["normal_logits"] = lse_pooling(
+        #     torch.stack(output["normal_logits"]).permute(0, 2, 1)
+        # )
         return output

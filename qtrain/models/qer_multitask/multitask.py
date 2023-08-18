@@ -12,8 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class MultiTaskNet(torch.nn.Module):
-    def __init__(self,args):
-
+    def __init__(self, args):
         # get all the above args in a dict
         super().__init__()
         self.args = args
@@ -32,10 +31,11 @@ class MultiTaskNet(torch.nn.Module):
 
         self.num_features = self.backbone.encoder.out_channels[-1]
 
-        
         self.num_features += self.backbone.segmentation_head[0].in_channels
-        self.multi_fc = qer_utils.nn.models.multilabel.MultiFC(self.num_features, self.args.cls_nclasses)
-        self.acute_chronic_multi_fc = qer_utils.nn.models.multilabel.MultiFC(self.num_features, self.args.cls_ac_nclasses)
+        self.multi_fc = qer_utils.nn.models.multilabel.MultiFC(self.num_features, 1)
+        self.acute_chronic_multi_fc = qer_utils.nn.models.multilabel.MultiFC(
+            self.num_features, 1
+        )
         self.acute_chronic_fc = nn.Linear(self.args.n_slices, 1)
 
         # self.normal_multi_fc = qer_utils.nn.models.multilabel.MultiFC(self.num_features, self.args.cls_nclasses)
@@ -66,7 +66,9 @@ class MultiTaskNet(torch.nn.Module):
         output = {}
         decoder_output = self.backbone.decoder(*features)
         masks = self.backbone.segmentation_head(decoder_output)
-        masks = torch.nn.functional.interpolate(masks, size=inp_shape, mode="bilinear", align_corners=False)
+        masks = torch.nn.functional.interpolate(
+            masks, size=inp_shape, mode="bilinear", align_corners=False
+        )
 
         embeddings = torch.cat(
             [embeddings, qer_utils.nn.models.pooling.pool(decoder_output, "max")],
@@ -76,10 +78,14 @@ class MultiTaskNet(torch.nn.Module):
 
         slice_out = self.multi_fc(embeddings)
         output["slc_logits"] = slice_out[0]
-        output["acute_chronic_logits"] = self.acute_chronic_fc(self.acute_chronic_multi_fc(embeddings)[0].permute(1,0)).T
+        output["acute_chronic_logits"] = self.acute_chronic_fc(
+            self.acute_chronic_multi_fc(embeddings)[0].permute(1, 0)
+        ).T
         # output["normal_logits"] = self.normal_fc(self.normal_multi_fc(embeddings)[0].permute(1,0)).T
-
-#         output["slice_embeddings"] = embeddings
+        # output["slice_embeddings"] = embeddings
+        # output["dummy_layer_acute_chronic"] = torch.cat(
+        #     self.acute_chronic_multi_fc(embeddings), dim=1
+        # )
         return output
 
     def forward(self, ct, chunk_size=None):
@@ -91,6 +97,8 @@ class MultiTaskNet(torch.nn.Module):
                 output[key].append(out[key])
         for key in output:
             output[key] = torch.stack(output[key])
+            if "dummy_layer" in key:
+                continue
             if key in ["acute_chronic_logits", "normal_logits"]:
                 output[key] = output[key].squeeze(1)
         return output
@@ -120,14 +128,20 @@ class MultiTaskSeq(MultiTaskNet):
         final_output = {}
         if "pixel" in out:
             pixel_output = out["pixel"]
-            pixel_output = pixel_output.view(batch_size, z_size, pixel_output.shape[1], *inp_shape[-2:]).transpose(1, 2)
+            pixel_output = pixel_output.view(
+                batch_size, z_size, pixel_output.shape[1], *inp_shape[-2:]
+            ).transpose(1, 2)
             final_output["pixel"] = pixel_output
 
         if "slice" in out:
             slice_output = out["slice"]
-            slice_output = [y.view(batch_size, z_size, 2).transpose(1, 2) for y in slice_output]  # [(b, 2, z)]
+            slice_output = [
+                y.view(batch_size, z_size, 2).transpose(1, 2) for y in slice_output
+            ]  # [(b, 2, z)]
 
-            scan_output = [qer_utils.nn.models.fusion.lse_pooling(y, beta=4) for y in slice_output]
+            scan_output = [
+                qer_utils.nn.models.fusion.lse_pooling(y, beta=4) for y in slice_output
+            ]
 
             final_output["scan"] = scan_output
             final_output["slice"] = slice_output
