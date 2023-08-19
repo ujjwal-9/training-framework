@@ -53,8 +53,8 @@ class InfarctDataModule(pl.LightningDataModule):
             )
             self.args.num_workers = 0
 
-        self.num_workers = self.args.num_workers
         self.seed = self.args.seed
+        self.num_workers = self.args.num_workers
         self.batch_size = self.args.batch_size
         self.valid_batch_size = self.args.valid_batch_size
 
@@ -79,23 +79,24 @@ class InfarctDataModule(pl.LightningDataModule):
             dataset = InfarctDataset3D_Fast(self.args, status)
         return dataset
 
-    def setup_dataloader(self, dataset, batch_size, n_samples, mode="train"):
+    def setup_dataloader(self, dataset, batch_size, n_samples):
         sampler = None
         shuffle = True
         if self.args.sampler == True:
-            shuffle = None
-            from torch.utils.data import WeightedRandomSampler
+            if n_samples > 0:
+                shuffle = None
+                from torch.utils.data import WeightedRandomSampler
 
-            sampler = WeightedRandomSampler(
-                dataset.dataset.sample_wts.to_list(), n_samples
-            )
+                sampler = WeightedRandomSampler(
+                    dataset.dataset.sample_wts.to_list(), n_samples
+                )
 
         loader = DataLoader(
             dataset,
             batch_size=batch_size,
             num_workers=self.num_workers,
-            drop_last=True,
-            pin_memory=True,
+            drop_last=self.args.dl_drop_last,
+            pin_memory=self.args.dl_pin_memory,
             shuffle=shuffle,
             sampler=sampler,
             prefetch_factor=self.args.prefetch,
@@ -106,7 +107,9 @@ class InfarctDataModule(pl.LightningDataModule):
         train_dataset = self.setup_dataset("train")
         self.num_classes = train_dataset.max_classes
         loader = self.setup_dataloader(
-            train_dataset, self.batch_size, self.args.train_samples
+            train_dataset,
+            self.batch_size,
+            self.args.train_samples,
         )
         self.num_samples = len(loader)
         return loader
@@ -116,7 +119,6 @@ class InfarctDataModule(pl.LightningDataModule):
             self.setup_dataset("valid"),
             self.valid_batch_size,
             self.args.valid_samples,
-            mode="valid",
         )
         return loader
 
