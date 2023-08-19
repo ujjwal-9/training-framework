@@ -163,7 +163,6 @@ for metrics_ in metrics_to_monitor:
             monitor=metrics_["monitor"],
             mode=metrics_["mode"],
             save_top_k=2,
-            # save_last=True
         )
     )
 
@@ -217,8 +216,8 @@ trainer = pl.Trainer(
     track_grad_norm=args.track_grad_norm,
     detect_anomaly=False,
     num_sanity_val_steps=0,
-    #  overfit_batches=10,
-    #  limit_val_batches=0.1
+    # overfit_batches=5,
+    # limit_val_batches=0.1,
 )
 
 if __name__ == "__main__":
