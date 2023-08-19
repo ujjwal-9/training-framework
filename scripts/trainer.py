@@ -205,7 +205,6 @@ trainer = pl.Trainer(
     callbacks=callbacks_to_minitor,
     logger=[tb_logger],
     sync_batchnorm=args.sync_batchnorm,
-    fast_dev_run=args.fast_dev_run,
     strategy=args.strategy,
     accumulate_grad_batches=args.accumulate_grad_batches,
     gradient_clip_val=args.gradient_clip_val,
