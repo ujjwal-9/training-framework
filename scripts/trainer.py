@@ -21,13 +21,11 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from qtrain.dataset.infarct import InfarctDataModule
 from qtrain.models.train_models import qMultiTasker
 
-from clearml import Task
-
 
 import ssl
 
 ssl._create_default_https_context = ssl._create_unverified_context
-torch.multiprocessing.set_sharing_strategy("file_system")
+# torch.multiprocessing.set_sharing_strategy("file_system")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:21"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -48,7 +46,10 @@ with open(init_args.config) as f:
 args = munch.munchify(args)
 args.experiment = init_args.exp
 pl.seed_everything(args.seed, workers=True)
-task = Task.init(project_name="Infarcts Segmentation", task_name=args.experiment)
+if args.clear_ml:
+    from clearml import Task
+
+    task = Task.init(project_name="Infarcts Segmentation", task_name=args.experiment)
 
 print("Training parameters:\n", args)
 
@@ -73,7 +74,6 @@ metrics_to_monitor = [
         "mode": "min",
         "filename": "{train_loss:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
     },
-    # {"monitor": "valid_normal_ce", "mode": 'min', "filename": "valid_normal_ce_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_ce:.2f}"},
     {
         "monitor": "valid_infarct_bce",
         "mode": "min",
@@ -129,10 +129,6 @@ metrics_to_monitor = [
         "mode": "max",
         "filename": "{valid_infarct_epoch_chronic_auc:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
     },
-    # {"monitor": "valid_normal_sensitivity", "mode": 'max', "filename": "valid_normal_sensitivity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_sensitivity:2f}"},
-    # {"monitor": "valid_normal_specificity", "mode": 'max', "filename": "valid_normal_specificity_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_specificity:.2f}"},
-    # {"monitor": "valid_normal_youden", "mode": 'max', "filename": "valid_normal_youden_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_youden:.2f}"},
-    # {"monitor": "valid_normal_auc", "mode": 'max', "filename": "valid_normal_auc_{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}-{valid_normal_auc:.2f}"},
     {
         "monitor": "valid_seg_epoch_miou",
         "mode": "max",
