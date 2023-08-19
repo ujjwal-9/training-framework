@@ -20,7 +20,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 from qtrain.dataset.infarct import InfarctDataModule
 from qtrain.models.train_models import qMultiTasker
-
+from clearml import Task
 
 import ssl
 
@@ -46,10 +46,7 @@ with open(init_args.config) as f:
 args = munch.munchify(args)
 args.experiment = init_args.exp
 pl.seed_everything(args.seed, workers=True)
-if args.clear_ml:
-    from clearml import Task
-
-    task = Task.init(project_name="Infarcts Segmentation", task_name=args.experiment)
+task = Task.init(project_name="Infarcts Segmentation", task_name=args.experiment)
 
 print("Training parameters:\n", args)
 
