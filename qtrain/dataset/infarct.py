@@ -832,10 +832,7 @@ class InfarctDataset3D_60k(Dataset):
         self.series = []
 
         if self.run_type in ["train", "test", "valid"]:
-            if self.args.fast_dev_run == True:
-                counter = self.args.fast_batch_size
-            else:
-                counter = len(self.dataset)
+            counter = len(self.dataset)
 
             self.max_classes = 0
             for index in tqdm(range(counter), desc=f"{self.run_type} data"):
