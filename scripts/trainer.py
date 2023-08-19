@@ -196,6 +196,8 @@ else:
                 ver = int(ver_)
 print(f"\nLOG FOLDER: VERSION_{ver}\n")
 
+from pytorch_lightning.accelerators import find_usable_cuda_devices
+
 trainer = pl.Trainer(
     accelerator="auto",
     devices=args.gpu,
