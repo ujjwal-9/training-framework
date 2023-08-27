@@ -51,12 +51,13 @@ task = Task.init(project_name="Infarcts Segmentation", task_name=args.experiment
 print("Training parameters:\n", args)
 
 dm = InfarctDataModule(args)
-args.train_iters = dm.get_num_training_samples() // args.batch_size
+args.train_iters = int(dm.get_num_training_samples() / args.batch_size * len(args.gpu))
 if ("total_steps" in args.scheduler_params) and (
     args.scheduler_params.total_steps is None
 ):
-    args.scheduler_params.total_steps = args.train_iters // args.accumulate_grad_batches
-
+    args.scheduler_params.total_steps = int(
+        args.train_iters / args.accumulate_grad_batches
+    )
 model = qMultiTasker(args)
 callbacks_to_minitor = []
 
@@ -76,16 +77,16 @@ metrics_to_monitor = [
         "mode": "min",
         "filename": "{valid_infarct_bce:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
     },
-    {
-        "monitor": "valid_slc_bce",
-        "mode": "min",
-        "filename": "{valid_slc_bce:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    },
-    {
-        "monitor": "valid_seg_focal",
-        "mode": "min",
-        "filename": "{valid_seg_focal:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    },
+    # {
+    #     "monitor": "valid_slc_bce",
+    #     "mode": "min",
+    #     "filename": "{valid_slc_bce:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    # },
+    # {
+    #     "monitor": "valid_seg_focal",
+    #     "mode": "min",
+    #     "filename": "{valid_seg_focal:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    # },
     {
         "monitor": "valid_infarct_epoch_acute_sensitivity",
         "mode": "max",
@@ -126,31 +127,31 @@ metrics_to_monitor = [
         "mode": "max",
         "filename": "{valid_infarct_epoch_chronic_auc:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
     },
-    {
-        "monitor": "valid_seg_epoch_miou",
-        "mode": "max",
-        "filename": "{valid_seg_epoch_miou:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    },
-    {
-        "monitor": "valid_slc_epoch_sensitivity",
-        "mode": "max",
-        "filename": "{valid_slc_epoch_sensitivity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    },
-    {
-        "monitor": "valid_slc_epoch_specificity",
-        "mode": "max",
-        "filename": "{valid_slc_epoch_specificity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    },
-    {
-        "monitor": "valid_slc_epoch_youden",
-        "mode": "max",
-        "filename": "{valid_slc_epoch_youden:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    },
-    {
-        "monitor": "valid_slc_epoch_auc",
-        "mode": "max",
-        "filename": "{valid_slc_epoch_auc:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    },
+    # {
+    #     "monitor": "valid_seg_epoch_miou",
+    #     "mode": "max",
+    #     "filename": "{valid_seg_epoch_miou:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    # },
+    # {
+    #     "monitor": "valid_slc_epoch_sensitivity",
+    #     "mode": "max",
+    #     "filename": "{valid_slc_epoch_sensitivity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    # },
+    # {
+    #     "monitor": "valid_slc_epoch_specificity",
+    #     "mode": "max",
+    #     "filename": "{valid_slc_epoch_specificity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    # },
+    # {
+    #     "monitor": "valid_slc_epoch_youden",
+    #     "mode": "max",
+    #     "filename": "{valid_slc_epoch_youden:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    # },
+    # {
+    #     "monitor": "valid_slc_epoch_auc",
+    #     "mode": "max",
+    #     "filename": "{valid_slc_epoch_auc:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    # },
 ]
 
 for metrics_ in metrics_to_monitor:
@@ -194,7 +195,7 @@ else:
         else:
             if ver < int(ver_):
                 ver = int(ver_)
-print(f"\nLOG FOLDER: VERSION_{ver}\n")
+print(f"\nLOG FOLDER: VERSION_{ver+1}\n")
 
 from pytorch_lightning.accelerators import find_usable_cuda_devices
 

@@ -226,10 +226,6 @@ class qMultiTasker(pl.LightningModule):
         torch.nan_to_num_(
             trg_cls, nan=self.nan_score, posinf=self.nan_score, neginf=self.nan_score
         )
-
-        slc_loss_dict, slc_loss, slc_metric = self.slc_loss_criterion(
-            pred["slc_logits"], gt, series, prefix
-        )
         (
             infarct_type_loss_dict,
             infarct_type_loss,
@@ -237,15 +233,19 @@ class qMultiTasker(pl.LightningModule):
         ) = self.infarct_loss_criterion(
             pred["acute_chronic_logits"], infarct_cls, series, prefix
         )
-        seg_loss_dict, seg_loss, seg_metric = self.seg_loss_criterion(
-            pred["masks"], gt, series, prefix
-        )
+        # slc_loss_dict, slc_loss, slc_metric = self.slc_loss_criterion(
+        #     pred["slc_logits"], gt, series, prefix
+        # )
+        # seg_loss_dict, seg_loss, seg_metric = self.seg_loss_criterion(
+        #     pred["masks"], gt, series, prefix
+        # )
 
-        loss = seg_loss + slc_loss + infarct_type_loss
+        # loss = seg_loss + slc_loss + infarct_type_loss
+        loss = infarct_type_loss
         log_losses = defaultdict()
         losses = {
-            "seg": seg_loss_dict,
-            "slc": slc_loss_dict,
+            # "seg": seg_loss_dict,
+            # "slc": slc_loss_dict,
             "infarct": infarct_type_loss_dict,
         }
         for key in losses:
@@ -277,23 +277,23 @@ class qMultiTasker(pl.LightningModule):
 
     def compute_epoch_metric(self, prefix):
         epoch_metric = defaultdict()
-        epoch_metric[f"{prefix}_seg_epoch_miou"] = torch.mean(
-            torch.tensor(self.seg_storage[prefix]["miou"])
-        )
+        # epoch_metric[f"{prefix}_seg_epoch_miou"] = torch.mean(
+        #     torch.tensor(self.seg_storage[prefix]["miou"])
+        # )
 
-        for key in self.point_estimates["slc"]["epoch_metrics"]:
-            epoch_metric[f"{prefix}_slc_epoch_{key}"] = put_torchmetric_to_device(
-                self.point_estimates["slc"]["epoch_metrics"][key], self.device
-            )(
-                torch.vstack(self.slc_storage[prefix]["scores"]),
-                torch.vstack(self.slc_storage[prefix]["gt"]),
-            )
+        # for key in self.point_estimates["slc"]["epoch_metrics"]:
+        #     epoch_metric[f"{prefix}_slc_epoch_{key}"] = put_torchmetric_to_device(
+        #         self.point_estimates["slc"]["epoch_metrics"][key], self.device
+        #     )(
+        #         torch.vstack(self.slc_storage[prefix]["scores"]),
+        #         torch.vstack(self.slc_storage[prefix]["gt"]),
+        #     )
 
-        (
-            epoch_metric[f"{prefix}_slc_epoch_sensitivity"],
-            epoch_metric[f"{prefix}_slc_epoch_specificity"],
-            epoch_metric[f"{prefix}_slc_epoch_youden"],
-        ) = get_sens_spec_youden(self.slc_storage[prefix]["confusion_matrix"])
+        # (
+        #     epoch_metric[f"{prefix}_slc_epoch_sensitivity"],
+        #     epoch_metric[f"{prefix}_slc_epoch_specificity"],
+        #     epoch_metric[f"{prefix}_slc_epoch_youden"],
+        # ) = get_sens_spec_youden(self.slc_storage[prefix]["confusion_matrix"])
 
         for k in self.infarcts_type:
             for key in self.point_estimates["infarct"]["epoch_metrics"]:

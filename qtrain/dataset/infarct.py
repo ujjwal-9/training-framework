@@ -27,11 +27,15 @@ from tqdm import tqdm
 from warnings import warn
 from safetensors import safe_open
 
-from qtrain.utils import apply_torch_transform_3d, get_croped_3d_volume
+from qtrain.utils import (
+    apply_torch_transform_3d,
+    get_croped_3d_volume,
+    RandomCrop,
+    hu_windowing,
+)
 from qer_utils.nn.windowing import get_windower, default_window_opts
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
-from safetensors import safe_open
 import numpy as np
 import SimpleITK as sitk
 from torchvision import transforms
@@ -410,6 +414,11 @@ class InfarctDataset3D(Dataset):
             target = TF.hflip(target)
             # random_flip = transforms.RandomHorizontalFlip(p=1)
             # input_scan, target = apply_torch_transform_3d(random_flip, state, self.spatial_dim_idx, input_scan, target)
+
+        if random.random() > 0.5:
+            input_scan = input_scan[::-1, ...]
+            target = target[::-1, ...]
+
         if random.random() < 0.6:
             input_scan = transforms.GaussianBlur(5, sigma=(0.1, 2.0))(input_scan)
 
@@ -901,10 +910,14 @@ class InfarctDataset3D_60k(Dataset):
         )
 
     def window_channels(self):
-        if self.args.windowing == "old":
+        if self.args.windowing == "conv":
             default_window_opts.intensity_augmnetation = False
             default_window_opts.window_inits = [(80, 40), (175, 50), (40, 40)]
             return get_windower(default_window_opts)
+
+        elif self.args.windowing == "tensor_based":
+            window_configs = torch.tensor([(80, 40), (175, 50), (40, 40)])
+            return hu_windowing(window_configs)
 
         elif self.args.windowing == "brain":
             return windowing.WindowsAsChannelsTransform(
@@ -950,7 +963,7 @@ class InfarctDataset3D_60k(Dataset):
             exit(0)
 
     def get_window_channels(self, scan):
-        if self.args.windowing == "old":
+        if (self.args.windowing == "conv") or (self.args.windowing == "tensor_based"):
             return self.window_as_channel(scan)
         else:
             scan_windowed = [
@@ -1140,12 +1153,6 @@ class InfarctDataset3D_60k(Dataset):
         return len(self.datapath)
 
     def train_transforms(self, input_scan, target):
-        input_scan = transforms.Resize(
-            self.input_shape, transforms.InterpolationMode.BILINEAR
-        )(input_scan)
-        target = transforms.Resize(
-            self.input_shape, transforms.InterpolationMode.NEAREST
-        )(target)
         if self.run_type == "train" and self.args.augmentation:
             state = torch.get_rng_state()
             if random.random() < 0.7:
@@ -1173,6 +1180,10 @@ class InfarctDataset3D_60k(Dataset):
                 input_scan = TF.hflip(input_scan)
                 target = TF.hflip(target)
 
+            if random.random() > 0.5:
+                input_scan = torch.flip(input_scan, dims=(0,))
+                target = torch.flip(target, dims=(0,))
+
             if random.random() < 0.6:
                 input_scan = transforms.GaussianBlur(5, sigma=(0.1, 2.0))(input_scan)
 
@@ -1188,6 +1199,18 @@ class InfarctDataset3D_60k(Dataset):
 
             if random.random() < 0.1:
                 input_scan = transforms.RandomSolarize(threshold=0.85, p=1)(input_scan)
+
+            if random.random() > 0:
+                input_scan, target = RandomCrop((300, 300))(
+                    {"image": input_scan, "mask": target}
+                )
+
+        input_scan = transforms.Resize(
+            self.input_shape, transforms.InterpolationMode.BILINEAR
+        )(input_scan)
+        target = transforms.Resize(
+            self.input_shape, transforms.InterpolationMode.NEAREST
+        )(target)
 
         return input_scan, target
 

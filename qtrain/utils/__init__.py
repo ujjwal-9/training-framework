@@ -5,6 +5,25 @@ from torchvision import transforms as tfms
 from collections import defaultdict
 
 
+def hu_windowing(window_configs):
+    window_widths, window_levels = window_configs[:, 0], window_configs[:, 1]
+
+    def do_windowing(scan):
+        scan = scan.unsqueeze(1).expand(-1, window_configs.shape[0], -1, -1)
+        # Calculate the HU limits based on the window widths and levels
+        hu_mins = window_levels.unsqueeze(1) - window_widths.unsqueeze(1) / 2
+        hu_maxs = window_levels.unsqueeze(1) + window_widths.unsqueeze(1) / 2
+
+        # Clip the HU values to the specified ranges
+        scan = torch.clamp(scan, hu_mins[..., None], hu_maxs[..., None])
+
+        # Normalize the HU values to the range [0, 1]
+        scan = (scan - hu_mins[..., None]) / (hu_maxs[..., None] - hu_mins[..., None])
+        return scan
+
+    return do_windowing
+
+
 def default_factory(inner_default_type=list):
     return defaultdict(inner_default_type)
 
@@ -35,6 +54,37 @@ def put_torchmetric_to_device(func, device):
 
 def fix_sitk_arr_shape(arr, req_shape=(512, 512)):
     return tfms.Resize(req_shape)(torch.Tensor(arr)).numpy()
+
+
+class RandomCrop:
+    def __init__(self, output_size):
+        assert isinstance(output_size, (int, tuple))
+        if isinstance(output_size, int):
+            self.output_size = (output_size, output_size)
+        else:
+            assert len(output_size) == 2
+            self.output_size = output_size
+
+    @staticmethod
+    def get_params(tensor, output_size):
+        _, _, h, w = tensor.size()
+        th, tw = output_size
+        if w == tw and h == th:
+            return 0, 0, h, w
+
+        i = torch.randint(0, h - th + 1, size=(1,)).item()
+        j = torch.randint(0, w - tw + 1, size=(1,)).item()
+        return i, j, th, tw
+
+    def __call__(self, sample):
+        image, mask = sample["image"], sample["mask"]
+        # Applying the same random crop to both image and mask
+        i, j, h, w = self.get_params(image, self.output_size)
+
+        image = image[:, :, i : i + h, j : j + w]
+        mask = mask[:, i : i + h, j : j + w]
+
+        return image, mask
 
 
 def apply_torch_transform(transform, state, input_tensor, target_tensor=None):
