@@ -814,7 +814,10 @@ class InfarctDataset3D_60k(Dataset):
         self.datapath.append(scan)
         self.targetpath.append(annotation)
         self.labels.append(label)
-        self.crops.append(np.array(eval(crop)))
+        if self.args.crop:
+            self.crops.append(np.array(eval(crop)))
+        else:
+            self.crops.append(None)
         self.class_annot.append(cls)
         self.acute.append(acute)
         self.chronic.append(chronic)
