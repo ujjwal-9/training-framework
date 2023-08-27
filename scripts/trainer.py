@@ -72,21 +72,14 @@ metrics_to_monitor = [
         "mode": "min",
         "filename": "{train_loss:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
     },
+]
+
+infarct_monitors = [
     {
         "monitor": "valid_infarct_bce",
         "mode": "min",
         "filename": "{valid_infarct_bce:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
     },
-    # {
-    #     "monitor": "valid_slc_bce",
-    #     "mode": "min",
-    #     "filename": "{valid_slc_bce:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    # },
-    # {
-    #     "monitor": "valid_seg_focal",
-    #     "mode": "min",
-    #     "filename": "{valid_seg_focal:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    # },
     {
         "monitor": "valid_infarct_epoch_acute_sensitivity",
         "mode": "max",
@@ -127,32 +120,57 @@ metrics_to_monitor = [
         "mode": "max",
         "filename": "{valid_infarct_epoch_chronic_auc:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
     },
-    # {
-    #     "monitor": "valid_seg_epoch_miou",
-    #     "mode": "max",
-    #     "filename": "{valid_seg_epoch_miou:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    # },
-    # {
-    #     "monitor": "valid_slc_epoch_sensitivity",
-    #     "mode": "max",
-    #     "filename": "{valid_slc_epoch_sensitivity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    # },
-    # {
-    #     "monitor": "valid_slc_epoch_specificity",
-    #     "mode": "max",
-    #     "filename": "{valid_slc_epoch_specificity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    # },
-    # {
-    #     "monitor": "valid_slc_epoch_youden",
-    #     "mode": "max",
-    #     "filename": "{valid_slc_epoch_youden:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    # },
-    # {
-    #     "monitor": "valid_slc_epoch_auc",
-    #     "mode": "max",
-    #     "filename": "{valid_slc_epoch_auc:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
-    # },
 ]
+
+seg_monitors = [
+    {
+        "monitor": "valid_seg_focal",
+        "mode": "min",
+        "filename": "{valid_seg_focal:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_seg_epoch_miou",
+        "mode": "max",
+        "filename": "{valid_seg_epoch_miou:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+]
+
+slc_monitors = [
+    {
+        "monitor": "valid_slc_bce",
+        "mode": "min",
+        "filename": "{valid_slc_bce:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_slc_epoch_sensitivity",
+        "mode": "max",
+        "filename": "{valid_slc_epoch_sensitivity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_slc_epoch_specificity",
+        "mode": "max",
+        "filename": "{valid_slc_epoch_specificity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_slc_epoch_youden",
+        "mode": "max",
+        "filename": "{valid_slc_epoch_youden:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_slc_epoch_auc",
+        "mode": "max",
+        "filename": "{valid_slc_epoch_auc:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+]
+
+task_monitors = {
+    "seg": seg_monitors,
+    "slc": slc_monitors,
+    "infarct": infarct_monitors,
+}
+
+for task in args.tasks:
+    metrics_to_monitor.extend(task_monitors[task])
 
 for metrics_ in metrics_to_monitor:
     callbacks_to_minitor.append(
@@ -163,7 +181,6 @@ for metrics_ in metrics_to_monitor:
             save_top_k=2,
         )
     )
-
 
 if args.stochastic_weight_averaging:
     from pytorch_lightning.callbacks import StochasticWeightAveraging

@@ -326,8 +326,8 @@ class InfarctDataset3D(Dataset):
 
         annotation[annotation > 0] = 1
         annotation = annotation.to(torch.int)
-        # if self.args.crop:
-        #     ct_scan, annotation = self.get_crop(ct_scan, annotation)
+        if self.args.crop:
+            ct_scan, annotation = self.get_crop(ct_scan, annotation)
         ct_scan = self.get_window_channels(ct_scan)
         return ct_scan, annotation
 
@@ -1203,7 +1203,7 @@ class InfarctDataset3D_60k(Dataset):
             if random.random() < 0.1:
                 input_scan = transforms.RandomSolarize(threshold=0.85, p=1)(input_scan)
 
-            if random.random() > 0:
+            if random.random() < 0.4:
                 input_scan, target = RandomCrop((300, 300))(
                     {"image": input_scan, "mask": target}
                 )
