@@ -34,52 +34,61 @@ class MultiTaskSeqAttn(nn.Module):
             center=True if self.args.encoder_name.startswith("vgg") else False,
         )
 
-        self.segmentation_head = SegmentationHead(
-            in_channels=self.args.decoder_channels[-1],
-            out_channels=self.args.n_segmaps,
-            activation=self.args.seg_activation,
-            kernel_size=self.args.kernel_size,
-        )
+        if "seg" in self.args.tasks:
+            self.segmentation_head = SegmentationHead(
+                in_channels=self.args.decoder_channels[-1],
+                out_channels=self.args.n_segmaps,
+                activation=self.args.seg_activation,
+                kernel_size=self.args.kernel_size,
+            )
 
-        self.slc_classification_head = ClassificationHead(
-            in_channels=self.encoder.out_channels[-1],
-            classes=self.args.cls_nclasses,
-            pooling=self.args.cls_pooling,
-            dropout=self.args.cls_dropout,
-            activation=None,
-        )
+        if "slc" in self.args.tasks:
+            self.slc_classification_head = ClassificationHead(
+                in_channels=self.encoder.out_channels[-1],
+                classes=self.args.cls_nclasses,
+                pooling=self.args.cls_pooling,
+                dropout=self.args.cls_dropout,
+                activation=None,
+            )
 
-        self.acute_chronic_classification_head = ClassificationHead(
-            in_channels=self.encoder.out_channels[-1],
-            classes=self.args.cls_ac_nclasses,
-            pooling=self.args.cls_ac_pooling,
-            dropout=self.args.cls_ac_dropout,
-            activation=None,
-        )
+        if "infarct" in self.args.tasks:
+            self.acute_chronic_classification_head = ClassificationHead(
+                in_channels=self.encoder.out_channels[-1],
+                classes=self.args.cls_ac_nclasses,
+                pooling=self.args.cls_ac_pooling,
+                dropout=self.args.cls_ac_dropout,
+                activation=None,
+            )
+            self.acute_chronic_fc = nn.Linear(self.args.n_slices, 1)
 
-        self.acute_chronic_fc = nn.Linear(self.args.n_slices, 1)
-
-        self.normal_classification_head = ClassificationHead(
-            in_channels=self.encoder.out_channels[-1],
-            classes=self.args.cls_normal_nclasses,
-            pooling=self.args.cls_normal_pooling,
-            dropout=self.args.cls_normal_dropout,
-            activation=None,
-        )
+        if "normal" in self.args.tasks:
+            self.normal_classification_head = ClassificationHead(
+                in_channels=self.encoder.out_channels[-1],
+                classes=self.args.cls_normal_nclasses,
+                pooling=self.args.cls_normal_pooling,
+                dropout=self.args.cls_normal_dropout,
+                activation=None,
+            )
 
         self.se_blocks = nn.ModuleList(
             [SqueezeExcitation(self.args.n_slices, 5) for i in range(self.args.depth)]
         )
 
+        self.dropout = torch.nn.Dropout(self.args.cls_dropout)
+
         self.initialize()
 
     def initialize(self):
         init.initialize_decoder(self.decoder)
-        init.initialize_head(self.segmentation_head)
-        init.initialize_head(self.slc_classification_head)
-        init.initialize_head(self.acute_chronic_classification_head)
-        init.initialize_head(self.normal_classification_head)
-        init.initialize_head(self.acute_chronic_fc)
+        if "seg" in self.args.tasks:
+            init.initialize_head(self.segmentation_head)
+        if "slc" in self.args.tasks:
+            init.initialize_head(self.slc_classification_head)
+        if "infarct" in self.args.tasks:
+            init.initialize_head(self.acute_chronic_classification_head)
+            init.initialize_head(self.acute_chronic_fc)
+        if "normal" in self.args.tasks:
+            init.initialize_head(self.normal_classification_head)
 
     def forward(self, ct, emb_pred_concat=False, embedding=False):
         """Sequentially pass `x` trough model`s encoder, decoder and heads"""
@@ -94,36 +103,50 @@ class MultiTaskSeqAttn(nn.Module):
                 ).permute(1, 0, 2, 3)
 
             decoder_output = self.decoder(*features)
-            masks = self.segmentation_head(decoder_output)
-            if emb_pred_concat:
-                masks = torch.nn.functional.interpolate(
-                    masks, size=inp_shape, mode="bilinear", align_corners=False
-                )
 
-                embeddings = torch.cat(
+            if "seg" in self.args.tasks:
+                masks = self.segmentation_head(decoder_output)
+                output["masks"].append(masks)
+
+            if emb_pred_concat:
+                features[-1] = qer_utils.nn.models.pooling.pool(features[-1], "avg")
+                features[-1] = self.dropout(features[-1])
+
+                features[-1] = torch.cat(
                     [
-                        embeddings,
+                        features[-1],
                         qer_utils.nn.models.pooling.pool(decoder_output, "max"),
                     ],
                     dim=1,
                 )
-            slc_logits = self.slc_classification_head(features[-1])
-            acute_chronic_logits = self.acute_chronic_classification_head(features[-1])
-            normal_logits = self.normal_classification_head(features[-1])
 
-            output["masks"].append(masks)
-            output["slc_logits"].append(slc_logits)
-            output["acute_chronic_logits"].append(acute_chronic_logits)
-            # output["normal_logits"].append(normal_logits)
+            if "slc" in self.args.tasks:
+                slc_logits = self.slc_classification_head(features[-1])
+                output["slc_logits"].append(slc_logits)
+
+            if "infarct" in self.args.tasks:
+                acute_chronic_logits = self.acute_chronic_classification_head(
+                    features[-1]
+                )
+                output["acute_chronic_logits"].append(acute_chronic_logits)
+
+            if "normal" in self.args.tasks:
+                normal_logits = self.normal_classification_head(features[-1])
+                output["normal_logits"].append(normal_logits)
+
             if embedding:
                 output["embedding"].append(features[-1])
 
-        output["masks"] = torch.stack(output["masks"])
-        output["slc_logits"] = torch.stack(output["slc_logits"])
-        output["acute_chronic_logits"] = self.acute_chronic_fc(
-            torch.stack(output["acute_chronic_logits"]).permute(0, 2, 1)
-        )[:, :, 0]
-        # output["normal_logits"] = lse_pooling(
-        #     torch.stack(output["normal_logits"]).permute(0, 2, 1)
-        # )
+        if "seg" in self.args.tasks:
+            output["masks"] = torch.stack(output["masks"])
+        if "slc" in self.args.tasks:
+            output["slc_logits"] = torch.stack(output["slc_logits"])
+        if "infarct" in self.args.tasks:
+            output["acute_chronic_logits"] = self.acute_chronic_fc(
+                torch.stack(output["acute_chronic_logits"]).permute(0, 2, 1)
+            )[:, :, 0]
+        if "normal" in self.args.tasks:
+            output["normal_logits"] = lse_pooling(
+                torch.stack(output["normal_logits"]).permute(0, 2, 1)
+            )
         return output

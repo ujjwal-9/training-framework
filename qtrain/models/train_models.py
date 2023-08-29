@@ -256,12 +256,6 @@ class qMultiTasker(pl.LightningModule):
             loss += seg_loss
             losses["seg"] = seg_loss_dict
 
-        # loss = infarct_type_loss
-        # losses = {
-        #     # "seg": seg_loss_dict,
-        #     # "slc": slc_loss_dict,
-        #     "infarct": infarct_type_loss_dict,
-        # }
         for key in losses:
             if losses[key] is None:
                 continue

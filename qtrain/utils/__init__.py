@@ -5,6 +5,37 @@ from torchvision import transforms as tfms
 from collections import defaultdict
 
 
+class RandomCrop:
+    def __init__(self, output_size):
+        assert isinstance(output_size, (int, tuple))
+        if isinstance(output_size, int):
+            self.output_size = (output_size, output_size)
+        else:
+            assert len(output_size) == 2
+            self.output_size = output_size
+
+    @staticmethod
+    def get_params(tensor, output_size):
+        _, _, h, w = tensor.size()
+        th, tw = output_size
+        if w == tw and h == th:
+            return 0, 0, h, w
+
+        i = torch.randint(0, h - th + 1, size=(1,)).item()
+        j = torch.randint(0, w - tw + 1, size=(1,)).item()
+        return i, j, th, tw
+
+    def __call__(self, sample):
+        image, mask = sample["image"], sample["mask"]
+        # Applying the same random crop to both image and mask
+        i, j, h, w = self.get_params(image, self.output_size)
+
+        image = image[:, :, i : i + h, j : j + w]
+        mask = mask[:, i : i + h, j : j + w]
+
+        return image, mask
+
+
 def hu_windowing(window_configs):
     window_widths, window_levels = window_configs[:, 0], window_configs[:, 1]
 
@@ -54,37 +85,6 @@ def put_torchmetric_to_device(func, device):
 
 def fix_sitk_arr_shape(arr, req_shape=(512, 512)):
     return tfms.Resize(req_shape)(torch.Tensor(arr)).numpy()
-
-
-class RandomCrop:
-    def __init__(self, output_size):
-        assert isinstance(output_size, (int, tuple))
-        if isinstance(output_size, int):
-            self.output_size = (output_size, output_size)
-        else:
-            assert len(output_size) == 2
-            self.output_size = output_size
-
-    @staticmethod
-    def get_params(tensor, output_size):
-        _, _, h, w = tensor.size()
-        th, tw = output_size
-        if w == tw and h == th:
-            return 0, 0, h, w
-
-        i = torch.randint(0, h - th + 1, size=(1,)).item()
-        j = torch.randint(0, w - tw + 1, size=(1,)).item()
-        return i, j, th, tw
-
-    def __call__(self, sample):
-        image, mask = sample["image"], sample["mask"]
-        # Applying the same random crop to both image and mask
-        i, j, h, w = self.get_params(image, self.output_size)
-
-        image = image[:, :, i : i + h, j : j + w]
-        mask = mask[:, i : i + h, j : j + w]
-
-        return image, mask
 
 
 def apply_torch_transform(transform, state, input_tensor, target_tensor=None):

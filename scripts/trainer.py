@@ -33,7 +33,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp", type=str, help="Name of experiment")
 parser.add_argument("--config", type=str, help="Path to config file")
-parser.add_argument("--resume", type=str, help="Resume training")
+parser.add_argument("--resume", type=str, help="Resume training", default=None)
 init_args = parser.parse_args()
 
 
@@ -59,7 +59,11 @@ if ("total_steps" in args.scheduler_params) and (
         args.train_iters / args.accumulate_grad_batches
     )
 model = qMultiTasker(args)
-callbacks_to_minitor = []
+callbacks_to_minitor = [
+    pl.callbacks.ModelCheckpoint(
+        save_last=True,
+    )
+]
 
 metrics_to_monitor = [
     {
@@ -214,8 +218,6 @@ else:
                 ver = int(ver_)
 print(f"\nLOG FOLDER: VERSION_{ver+1}\n")
 
-from pytorch_lightning.accelerators import find_usable_cuda_devices
-
 trainer = pl.Trainer(
     accelerator="auto",
     devices=args.gpu,
@@ -232,9 +234,10 @@ trainer = pl.Trainer(
     track_grad_norm=args.track_grad_norm,
     detect_anomaly=False,
     num_sanity_val_steps=0,
+    resume_from_checkpoint=init_args.resume,
     # overfit_batches=5,
     # limit_val_batches=0.1,
 )
 
 if __name__ == "__main__":
-    trainer.fit(model, dm, ckpt_path=init_args.resume)
+    trainer.fit(model, dm)
