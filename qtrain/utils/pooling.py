@@ -131,3 +131,27 @@ def soft_artifact_attention(a, artifact_probs, a_thresh=0.38):
     a[artifacts, 1] = -1e6
     a = a.view(orig_shape[0], -1, 2).transpose(1, 2)
     return soft_attention(a)
+
+
+def _flatten(a):
+    """Convert (b, 2, ...) to (b, 2, x)."""
+    batchsize, ftrs, *shp = a.shape
+    assert ftrs == 2
+    a = a - a.mean(dim=1).unsqueeze(1)
+
+    a_flat = a.view(batchsize, ftrs, -1)
+    return a_flat
+
+
+def _lse_max(a, r=20, dim=0):
+    log_n = torch.log(torch.tensor(float(a.shape[dim])))
+    return 1 / r * (torch.logsumexp(a * r, dim=dim) - log_n)
+
+
+def lse_pooling(a, beta=20):
+    a = _flatten(a)
+    s_pos = _lse_max(a[:, 1], r=beta, dim=1)
+    s_neg = -s_pos
+
+    s = torch.stack([s_neg, s_pos], dim=1)
+    return s

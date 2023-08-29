@@ -1,6 +1,8 @@
 import timm
+import torch
 from torch import nn
-from .pooling import MultiConv1x1, MultiSoftmax, min_max, soft_attention, soft_pooling
+import torch.nn.functional as F
+from .pooling import MultiConv1x1, MultiSoftmax, min_max, soft_attention, soft_pooling, lse_pooling
 
 
 def net_from_name(name):
@@ -13,7 +15,7 @@ class FusionResnet(nn.Module):
     Final fc of resnet is removed and replaced with multi softmax.
     """
 
-    def __init__(self, resnet, dropout=None, num_classes=2, attn_mode=None, stride=None, pretrained=None):
+    def __init__(self, resnet, dropout=None, num_classes=2, img_size=[60,224,224], attn_mode=None, stride=None, pretrained=None, return_pixel_output=True):
         """
         Args:
             resnet: ResNet to be modified
@@ -21,8 +23,9 @@ class FusionResnet(nn.Module):
                 after block 3 and 4.
         """
         super().__init__()
-
+        print(img_size)
         self.name = resnet
+        self.img_size = img_size
         self.resnet = net_from_name(self.name)
         self.resnet.train()
         total_params = sum(param.numel() for param in self.resnet.parameters())
@@ -54,11 +57,12 @@ class FusionResnet(nn.Module):
         self.multi_softmax = MultiSoftmax(self.num_features, self.num_classes)
         self.multi_softmax.train()
         # for segmentation
-        # if return_pixel_output:
-        #     self.multi_conv = MultiConv1x1(self.num_features, self.num_classes)
+        if return_pixel_output:
+            self.return_pixel_output = return_pixel_output
+            self.multi_conv = MultiConv1x1(self.num_features, self.num_classes)
 
-        # if self.use_dropout:
-        #     self.dropout = nn.Dropout2d(self.use_dropout)
+        if self.use_dropout:
+            self.dropout = nn.Dropout2d(self.use_dropout)
 
     def _if_dropout(self, x):
         if self.use_dropout:
@@ -101,9 +105,10 @@ class FusionResnet(nn.Module):
             ftrs = self.resnet.forward_features(x)
             pooled_output = self.resnet.global_pool(ftrs)
             pooled_output = self.multi_softmax(pooled_output)
-        return pooled_output
+        return ftrs, pooled_output
 
-    def forward(self, x, return_pixel_output=False, only_return_scan_output=False):
+    def forward(self, x):
+        return_pixel_output = self.return_pixel_output
         # x = (b, 3, z, 224, 224)
         batch_size = x.size(0)
         z_size = x.size(2)
@@ -111,7 +116,7 @@ class FusionResnet(nn.Module):
         # fold z in to batch dimension
         x = x.transpose(1, 2).contiguous()  # (b, z, 3, 224, 224)
         x = x.view(-1, *x.size()[2:])  # (b*z, 3, 224, 224)
-        pooled_output = self.ftrs(x)  # (b*z, num_features, 7, 7)
+        x, pooled_output = self.ftrs(x)  # (b*z, num_features, 7, 7)
 
         # pooled_output = self.multi_softmax(pooled_output)  # list of (b*z, 2)
         slice_output = [y.view(batch_size, z_size, 2).transpose(1, 2) for y in pooled_output]  # list of (b, 2, z)
@@ -120,23 +125,32 @@ class FusionResnet(nn.Module):
             img_output = [min_max(y) for y in slice_output]  # list of b x 2
         elif self.attn_mode in ("soft", "softminmax"):
             img_output = [soft_attention(y) for y in slice_output]
+        elif self.attn_mode == "lse":
+            img_output = [lse_pooling(y) for y in slice_output]
         else:
             raise NotImplementedError
         
-        if only_return_scan_output:
-            return img_output
+        if return_pixel_output:
+            if not getattr(self, "multi_conv", None):
+                return img_output, slice_output, None
 
-        return img_output, slice_output
+            # list of (b*z, 2, 7, 7)
+            pixel_output = self.multi_conv(x)
+            # list of (b, 2, z, 7, 7)
+            pixel_output = [y.view(batch_size, z_size, 2, *y.shape[-2:]).transpose(1, 2) for y in pixel_output]
+            for i in range(len(pixel_output)):
+                pixel_output[i] = F.softmax(pixel_output[i], dim=1)
+                pixel_output[i] = F.interpolate(pixel_output[i], size=self.img_size, mode="trilinear", align_corners=False)[0,1]
 
-        # if return_pixel_output:
-        #     if not getattr(self, "multi_conv", None):
-        #         return img_output, slice_output, None
+            pixel_output = torch.stack(pixel_output)
+            # pixel_output= pixel_output[0, 1].detach().cpu().numpy()
+            # x = (x > 0.5).astype("int16")
+            # print(x.shape)
+            # pixel_output = F.softmax(pixel_output[1], dim=1)
+            # pixel_output = F.interpolate(pixel_output, size=self.img_size, mode="trilinear", align_corners=False)
+            # pixel_output = pixel_output[:,1]
+            # print(pixel_output.shape)
 
-        #     # list of (b*z, 2, 7, 7)
-        #     pixel_output = self.multi_conv(x)
-        #     # list of (b, 2, z, 7, 7)
-        #     pixel_output = [y.view(batch_size, z_size, 2, *y.shape[-2:]).transpose(1, 2) for y in pixel_output]
-
-        #     return img_output, slice_output, pixel_output
-        # else:
-        #     return img_output, slice_output
+            return img_output[0], slice_output[0], pixel_output
+        else:
+            return img_output, slice_output
