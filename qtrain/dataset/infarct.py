@@ -1,11 +1,12 @@
 import os
-import h5py as h5
+import yaml
 import json
 import PIL
 import glob
 import pydicom
 import random
 import platform
+import h5py as h5
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
@@ -14,30 +15,20 @@ import SimpleITK as sitk
 import torch
 import pytorch_lightning as pl
 
-
-from qtrain.utils import windowing
 from torchvision import transforms
 import torchvision.transforms.functional as TF
-from monai.transforms import CropForeground
 from torch.utils.data import Dataset, DataLoader
-import pytorchvideo.transforms as video_tfms
-
 
 from tqdm import tqdm
 from warnings import warn
 from safetensors import safe_open
 
-from qtrain.utils import (
+from qtrain.utils.transforms import (
     RandomCrop,
     hu_windowing,
 )
-from qer_utils.nn.windowing import get_windower, default_window_opts
-from torch.utils.data import Dataset
-import torchvision.transforms.functional as TF
-import numpy as np
-import SimpleITK as sitk
-from torchvision import transforms
-import random
+
+
 import structlog
 
 logger = structlog.getLogger()
@@ -238,6 +229,8 @@ class InfarctDataset3D_60k(Dataset):
 
     def window_channels(self):
         if self.args.windowing == "conv":
+            from qer_utils.nn.windowing import get_windower, default_window_opts
+
             default_window_opts.intensity_augmnetation = False
             default_window_opts.window_inits = [(80, 40), (175, 50), (40, 40)]
             return get_windower(default_window_opts)
@@ -286,7 +279,8 @@ class InfarctDataset3D_60k(Dataset):
             or self.datapath[index].split(".")[-1] == "safetensor"
         ):
             with safe_open(self.datapath[index], framework="pt", device="cpu") as f:
-                ct_scan = f.get_tensor("arr").numpy()
+                for k in f.keys():
+                    ct_scan = f.get_tensor(k).numpy()
         elif self.datapath[index].split(".")[-1] == "h5":
             ct_scan = h5.File(self.datapath[index], "r+")["arr"][:]
         elif self.datapath[index].split(".")[-1] == "npy":
@@ -354,7 +348,7 @@ class InfarctDataset3D_60k(Dataset):
         return (
             ct_scan,
             annotation,
-            [self.normal[index]],
+            [1 - self.normal[index]],
             [self.acute[index], self.chronic[index]],
         )
 
@@ -423,7 +417,7 @@ class InfarctDataset3D_60k(Dataset):
                 torch.ones((self.args.n_slices, self.args.img_size, self.args.img_size))
                 * -100
             )
-            label_class = [1]
+            label_class = [0]
             infarct_type = [-100, -100]
             logger.debug(f'Issue with this file {self.datapath[index].split("/")[-1]}')
             return (

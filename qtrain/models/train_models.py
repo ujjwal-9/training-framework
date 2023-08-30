@@ -13,8 +13,12 @@ import torch.nn.functional as F
 import torchmetrics
 
 from collections import defaultdict
-from qtrain.utils import get_sens_spec_youden, put_torchmetric_to_device
-from qtrain.models.utils import freeze_layers, unfreeze_layers
+from qtrain.metrics.cls_metrics import get_sens_spec_youden
+from qtrain.models.utils import (
+    freeze_layers,
+    unfreeze_layers,
+    put_torchmetric_to_device,
+)
 
 
 class qMultiTasker(pl.LightningModule):
@@ -37,9 +41,14 @@ class qMultiTasker(pl.LightningModule):
         self.infarcts_type = ["acute", "chronic"]
 
     def setup_epoch_storage(self):
-        self.seg_storage = defaultdict(dict)
-        self.slc_storage = defaultdict(dict)
-        self.infarcts_storage = defaultdict(dict)
+        if "seg" in self.args.tasks:
+            self.seg_storage = defaultdict(dict)
+        if "slc" in self.args.tasks:
+            self.slc_storage = defaultdict(dict)
+        if "infarct" in self.args.tasks:
+            self.infarcts_storage = defaultdict(dict)
+        if ("normal" in self.args.tasks) or ("stacked_normal" in self.args.tasks):
+            self.cls_storage = defaultdict(dict)
 
     def setup_model(self):
         if self.args.model == "multitask_qer":
@@ -72,7 +81,9 @@ class qMultiTasker(pl.LightningModule):
             else:
                 loss_dict[key] = self.point_estimates["seg"]["loss_wts"][
                     key
-                ] * self.point_estimates["seg"]["loss_fns"][key](
+                ] * put_torchmetric_to_device(
+                    self.point_estimates["seg"]["loss_fns"][key], self.device
+                )(
                     pred.view(-1, *pred.size()[2:]), gt.view(-1, *gt.shape[2:])
                 )
                 loss_dict[key] = torch.mean(loss_dict[key])
@@ -97,31 +108,42 @@ class qMultiTasker(pl.LightningModule):
         seg_metric = defaultdict()
         return loss_dict, total_loss, seg_metric
 
-    # def cls_loss_criterion(self, pred, gt, series, prefix):
-    #     total_loss = 0.0
-    #     loss_dict = defaultdict()
-    #     for key in self.point_estimates["cls"]["loss_fns"]:
-    #         loss_dict[key] = self.point_estimates["cls"]["loss_wts"][
-    #             key
-    #         ] * self.point_estimates["cls"]["loss_fns"][key](
-    #             pred, gt[:, 0].to(torch.long)
-    #         )
-    #         total_loss += loss_dict[key]
+    def cls_loss_criterion(self, pred, gt, series, prefix):
+        total_loss = 0.0
+        loss_dict = defaultdict()
+        for key in self.point_estimates["cls"]["loss_fns"]:
+            loss_dict[key] = self.point_estimates["cls"]["loss_wts"][
+                key
+            ] * put_torchmetric_to_device(
+                self.point_estimates["cls"]["loss_fns"][key], self.device
+            )(
+                pred,
+                gt[:, 0].to(torch.long),
+            )
+            total_loss += loss_dict[key]
 
-    #     tp, fp, tn, fn, sup = self.cls_sens_spec_metric(
-    #         pred.detach().argmax(1), gt[:, 0].detach().to(torch.long)
-    #     )
-    #     cls_metric = {
-    #         "auc": self.cls_auc_metric(
-    #             pred.detach().argmax(1), gt[:, 0].detach().to(torch.long)
-    #         ),
-    #         "sensitivity": tp / (tp + fn),
-    #         "specificity": tn / (tn + fp),
-    #         "youden": (tp / (tp + fn)) + (tn / (tn + fp)) - 1,
-    #     }
+        if len(self.cls_storage[prefix].items()) == 0:
+            self.cls_storage[prefix]["scores"] = []
+            self.cls_storage[prefix]["gt"] = []
+            self.cls_storage[prefix]["confusion_matrix"] = defaultdict(int)
 
-    #     # print("cls: ", total_loss)
-    #     return loss_dict, total_loss, cls_metric
+        pred_ = F.softmax(pred.detach())
+        self.cls_storage[prefix]["scores"].append(pred_.detach())
+        self.cls_storage[prefix]["gt"].append(gt.detach())
+
+        for key in self.point_estimates["cls"]["batch_metrics"]:
+            if key == "stats":
+                tp, fp, tn, fn, sup = put_torchmetric_to_device(
+                    self.point_estimates["cls"]["batch_metrics"][key], self.device
+                )(pred_, gt[:, 0].to(torch.long).detach())
+                self.cls_storage[prefix]["confusion_matrix"]["tp"] += tp.item()
+                self.cls_storage[prefix]["confusion_matrix"]["fp"] += fp.item()
+                self.cls_storage[prefix]["confusion_matrix"]["tn"] += tn.item()
+                self.cls_storage[prefix]["confusion_matrix"]["fn"] += fn.item()
+
+        cls_metric = defaultdict()
+        # print("cls: ", total_loss)
+        return loss_dict, total_loss, cls_metric
 
     def slc_loss_criterion(self, pred, gt, series, prefix):
         target_score = gt.sum(axis=(2, 3))
@@ -256,6 +278,13 @@ class qMultiTasker(pl.LightningModule):
             loss += seg_loss
             losses["seg"] = seg_loss_dict
 
+        if "normal" in self.args.tasks or "stacked_normal" in self.args.tasks:
+            cls_loss_dict, cls_loss, cls_metric = self.cls_loss_criterion(
+                pred["normal_logits"], trg_cls, series, prefix
+            )
+            loss += cls_loss
+            losses["cls"] = cls_loss_dict
+
         for key in losses:
             if losses[key] is None:
                 continue
@@ -289,6 +318,7 @@ class qMultiTasker(pl.LightningModule):
             epoch_metric[f"{prefix}_seg_epoch_miou"] = torch.mean(
                 torch.tensor(self.seg_storage[prefix]["miou"])
             )
+            self.seg_storage[prefix].clear()
 
         if "slc" in self.args.tasks:
             for key in self.point_estimates["slc"]["epoch_metrics"]:
@@ -304,6 +334,23 @@ class qMultiTasker(pl.LightningModule):
                 epoch_metric[f"{prefix}_slc_epoch_specificity"],
                 epoch_metric[f"{prefix}_slc_epoch_youden"],
             ) = get_sens_spec_youden(self.slc_storage[prefix]["confusion_matrix"])
+            self.slc_storage[prefix].clear()
+
+        if ("normal" in self.args.tasks) or ("stacked_normal" in self.args.tasks):
+            for key in self.point_estimates["cls"]["epoch_metrics"]:
+                epoch_metric[f"{prefix}_cls_epoch_{key}"] = put_torchmetric_to_device(
+                    self.point_estimates["cls"]["epoch_metrics"][key], self.device
+                )(
+                    torch.vstack(self.cls_storage[prefix]["scores"]),
+                    torch.vstack(self.cls_storage[prefix]["gt"])[:, 0],
+                )
+
+            (
+                epoch_metric[f"{prefix}_cls_epoch_sensitivity"],
+                epoch_metric[f"{prefix}_cls_epoch_specificity"],
+                epoch_metric[f"{prefix}_cls_epoch_youden"],
+            ) = get_sens_spec_youden(self.cls_storage[prefix]["confusion_matrix"])
+            self.cls_storage[prefix].clear()
 
         if "infarct" in self.args.tasks:
             for k in self.infarcts_type:
@@ -325,6 +372,7 @@ class qMultiTasker(pl.LightningModule):
                 ) = get_sens_spec_youden(
                     self.infarcts_storage[prefix][f"{k}_confusion_matrix"]
                 )
+            self.infarcts_storage[prefix].clear()
 
         self.log_dict(
             epoch_metric,
@@ -334,9 +382,6 @@ class qMultiTasker(pl.LightningModule):
             prog_bar=True,
             rank_zero_only=True,
         )
-        self.seg_storage[prefix].clear()
-        self.slc_storage[prefix].clear()
-        self.infarcts_storage[prefix].clear()
 
     def compute_batch(self, batch, batch_idx, prefix="train"):
         ct, gt_segmentation_map, trg_cls, infarct_cls, series = batch

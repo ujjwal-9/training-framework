@@ -16,6 +16,21 @@ class MultiTaskSeqAttn(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
+        try:
+            self.combined_embedding = self.args.combined_embedding
+        except:
+            self.combined_embedding = False
+
+        assert (
+            ("normal" in args.tasks)
+            or ("stacked_normal" in args.tasks)
+            or ("stacked_normal" not in args.tasks and "normal" not in args.tasks)
+        ), "stacked normal and normal head can't be used together"
+
+        if "stacked_normal" in args.tasks:
+            assert (
+                "infarct" in args.tasks
+            ), "infarct head is required for stacked normal head"
 
         self.encoder = smp.encoders.get_encoder(
             name=self.args.encoder_name,
@@ -70,11 +85,23 @@ class MultiTaskSeqAttn(nn.Module):
                 activation=None,
             )
 
+        if "stacked_normal" in self.args.tasks:
+            self.stacked_normal_classification_head = nn.Linear(
+                self.args.cls_ac_nclasses, 2
+            )
+
         self.se_blocks = nn.ModuleList(
             [SqueezeExcitation(self.args.n_slices, 5) for i in range(self.args.depth)]
         )
 
-        self.dropout = torch.nn.Dropout(self.args.cls_dropout)
+        if self.combined_embedding:
+            self.aggregator_decoder = nn.Conv2d(
+                self.args.decoder_channels[-1],
+                self.encoder.out_channels[-1],
+                3,
+                stride=8,
+                padding=1,
+            )
 
         self.initialize()
 
@@ -89,8 +116,10 @@ class MultiTaskSeqAttn(nn.Module):
             init.initialize_head(self.acute_chronic_fc)
         if "normal" in self.args.tasks:
             init.initialize_head(self.normal_classification_head)
+        if "stacked_normal" in self.args.tasks:
+            init.initialize_head(self.stacked_normal_classification_head)
 
-    def forward(self, ct, emb_pred_concat=False, embedding=False):
+    def forward(self, ct, embedding=False):
         """Sequentially pass `x` trough model`s encoder, decoder and heads"""
         output = defaultdict(list)
         batch_size = ct.size(0)
@@ -108,17 +137,8 @@ class MultiTaskSeqAttn(nn.Module):
                 masks = self.segmentation_head(decoder_output)
                 output["masks"].append(masks)
 
-            if emb_pred_concat:
-                features[-1] = qer_utils.nn.models.pooling.pool(features[-1], "avg")
-                features[-1] = self.dropout(features[-1])
-
-                features[-1] = torch.cat(
-                    [
-                        features[-1],
-                        qer_utils.nn.models.pooling.pool(decoder_output, "max"),
-                    ],
-                    dim=1,
-                )
+            if self.combined_embedding:
+                features[-1] = self.aggregator_decoder(decoder_output) * features[-1]
 
             if "slc" in self.args.tasks:
                 slc_logits = self.slc_classification_head(features[-1])
@@ -149,4 +169,10 @@ class MultiTaskSeqAttn(nn.Module):
             output["normal_logits"] = lse_pooling(
                 torch.stack(output["normal_logits"]).permute(0, 2, 1)
             )
+        if "stacked_normal" in self.args.tasks:
+            output["normal_logits"] = self.stacked_normal_classification_head(
+                output["acute_chronic_logits"]
+            )
+        if embedding:
+            output["embedding"] = torch.stack(output["embedding"])
         return output
