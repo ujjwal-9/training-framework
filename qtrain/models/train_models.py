@@ -51,14 +51,17 @@ class qMultiTasker(pl.LightningModule):
             self.cls_storage = defaultdict(dict)
 
     def setup_model(self):
-        if self.args.model == "multitask_qer":
-            from qtrain.models.qer_multitask.multitask import MultiTaskNet
+        if type(self.args.model) == str:
+            if self.args.model == "multitask_qer":
+                from qtrain.models.qer_multitask.multitask import MultiTaskNet
 
-            self.model = MultiTaskNet(self.args.model_params)
-        elif self.args.model == "se_multitasker":
-            from qtrain.models.unet.multitasker import MultiTaskSeqAttn
+                self.model = MultiTaskNet(self.args.model_params)
+            elif self.args.model == "se_multitasker":
+                from qtrain.models.unet.multitasker import MultiTaskSeqAttn
 
-            self.model = MultiTaskSeqAttn(self.args.model_params)
+                self.model = MultiTaskSeqAttn(self.args.model_params)
+        else:
+            self.model = self.args.model(self.args.model_params)
 
     def forward(self, z):
         z = self.model(z)
