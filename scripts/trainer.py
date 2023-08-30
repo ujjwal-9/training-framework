@@ -251,7 +251,6 @@ trainer = pl.Trainer(
     accelerator="auto",
     devices=args.gpu,
     precision=args.precision,
-    resume_from_checkpoint=args.resume_checkpoint,
     max_epochs=args.max_epoch,
     default_root_dir=log_dir,
     callbacks=callbacks_to_minitor,
@@ -269,4 +268,4 @@ trainer = pl.Trainer(
 )
 
 if __name__ == "__main__":
-    trainer.fit(model, dm)
+    trainer.fit(model, dm, ckpt_path=args.resume_checkpoint)
