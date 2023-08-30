@@ -58,6 +58,13 @@ if ("total_steps" in args.scheduler_params) and (
         args.train_iters / args.accumulate_grad_batches
     )
 model = qMultiTasker(args)
+if args.pretrained_checkpoint is not None:
+    model.load_state_dict(
+        torch.load(args.pretrained_checkpoint, map_location="cpu")["state_dict"],
+        strict=False,
+    )
+    print(f"Loaded pretrained checkpoint: {args.pretrained_checkpoint}")
+
 callbacks_to_minitor = [
     pl.callbacks.ModelCheckpoint(
         save_last=True,
