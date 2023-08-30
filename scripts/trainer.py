@@ -33,7 +33,6 @@ os.environ["MKL_NUM_THREADS"] = "1"
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp", type=str, help="Name of experiment")
 parser.add_argument("--config", type=str, help="Path to config file")
-parser.add_argument("--resume", type=str, help="Resume training", default=None)
 init_args = parser.parse_args()
 
 
@@ -167,10 +166,40 @@ slc_monitors = [
     },
 ]
 
+cls_monitors = [
+    {
+        "monitor": "valid_cls_ce",
+        "mode": "min",
+        "filename": "{valid_cls_ce:2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_cls_epoch_sensitivity",
+        "mode": "max",
+        "filename": "{valid_cls_epoch_sensitivity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_cls_epoch_specificity",
+        "mode": "max",
+        "filename": "{valid_cls_epoch_specificity:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_cls_epoch_youden",
+        "mode": "max",
+        "filename": "{valid_cls_epoch_youden:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+    {
+        "monitor": "valid_cls_epoch_auc",
+        "mode": "max",
+        "filename": "{valid_cls_epoch_auc:.2f}-{epoch:02d}-{valid_metric:.2f}-{train_metric:.2f}-{valid_loss:.2f}-{train_loss:.2f}",
+    },
+]
+
 task_monitors = {
     "seg": seg_monitors,
     "slc": slc_monitors,
     "infarct": infarct_monitors,
+    "normal": cls_monitors,
+    "stacked_normal": cls_monitors,
 }
 
 for task in args.tasks:
@@ -222,6 +251,7 @@ trainer = pl.Trainer(
     accelerator="auto",
     devices=args.gpu,
     precision=args.precision,
+    resume_from_checkpoint=args.resume_checkpoint,
     max_epochs=args.max_epoch,
     default_root_dir=log_dir,
     callbacks=callbacks_to_minitor,
@@ -234,7 +264,6 @@ trainer = pl.Trainer(
     track_grad_norm=args.track_grad_norm,
     detect_anomaly=False,
     num_sanity_val_steps=0,
-    resume_from_checkpoint=init_args.resume,
     # overfit_batches=5,
     # limit_val_batches=0.1,
 )
