@@ -5,6 +5,8 @@ data
 logs
 scripts/backup_logs/
 
+#vscode
+.vscode
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
