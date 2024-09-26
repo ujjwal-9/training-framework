@@ -1,5 +1,4 @@
-# qtrain
-qer training framework
+# train framework
 
 TODO:
 
